@@ -2,8 +2,8 @@ import React, { useState, useEffect, useRef, createContext, useContext } from 'r
 import axios from 'axios';
 import { io } from 'socket.io-client';
 
-const API = 'https://scintillating-peace-production-f45d.up.railway.app/api';
-const SOCKET = 'https://scintillating-peace-production-f45d.up.railway.app';
+const API = 'https://api.doorbite.ng/api';
+const SOCKET = 'https://api.doorbite.ng';
 
 // const API = 'http://10.228.50.56:5000/api';
 // const SOCKET = 'http://10.228.50.56:5000';
