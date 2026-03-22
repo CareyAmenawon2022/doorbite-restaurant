@@ -1,0 +1,542 @@
+import React, { useState, useEffect, useRef, createContext, useContext } from 'react';
+import axios from 'axios';
+import { io } from 'socket.io-client';
+
+const API = 'https://scintillating-peace-production-f45d.up.railway.app/api';
+const SOCKET = 'https://scintillating-peace-production-f45d.up.railway.app';
+
+// const API = 'http://10.228.50.56:5000/api';
+// const SOCKET = 'http://10.228.50.56:5000';
+
+const CLOUD_NAME = 'du34xyidb';
+const UPLOAD_PRESET = 'quicky';
+
+const api = axios.create({ baseURL: API });
+api.interceptors.request.use(c => { const t=localStorage.getItem('r_token'); if(t) c.headers.Authorization=`Bearer ${t}`; return c; });
+
+const C = { primary:'#FF6B2C', dark:'#1A1A1A', white:'#fff', bg:'#F8F8F8', border:'#E8E8E8', gray:'#888', success:'#22C55E', error:'#EF4444', warning:'#F59E0B' };
+const card = { background:'#fff', borderRadius:16, padding:20, boxShadow:'0 2px 8px rgba(0,0,0,0.05)', marginBottom:14 };
+const btn = (bg,color='#fff') => ({ background:bg, color, border:'none', padding:'9px 18px', borderRadius:10, cursor:'pointer', fontWeight:700, fontSize:13 });
+const inp = { border:`1px solid ${C.border}`, borderRadius:10, padding:'10px 14px', fontSize:14, width:'100%', outline:'none', boxSizing:'border-box' };
+
+// ── CLOUDINARY UPLOAD ─────────────────────────────────────────────────────────
+async function uploadToCloudinary(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('upload_preset', UPLOAD_PRESET);
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, { method:'POST', body:formData });
+  const data = await res.json();
+  if (data.secure_url) return data.secure_url;
+  throw new Error(data.error?.message || 'Upload failed');
+}
+
+const NIGERIAN_BANKS = [
+  {name:'Access Bank',code:'044'},{name:'Citibank Nigeria',code:'023'},{name:'Ecobank Nigeria',code:'050'},
+  {name:'Fidelity Bank',code:'070'},{name:'First Bank of Nigeria',code:'011'},{name:'First City Monument Bank (FCMB)',code:'214'},
+  {name:'Globus Bank',code:'00103'},{name:'Guaranty Trust Bank (GTBank)',code:'058'},{name:'Heritage Bank',code:'030'},
+  {name:'Jaiz Bank',code:'301'},{name:'Keystone Bank',code:'082'},{name:'Kuda Bank',code:'50211'},
+  {name:'Moniepoint MFB',code:'50515'},{name:'Opay',code:'999992'},{name:'Palmpay',code:'999991'},
+  {name:'Polaris Bank',code:'076'},{name:'Providus Bank',code:'101'},{name:'Stanbic IBTC Bank',code:'221'},
+  {name:'Standard Chartered Bank',code:'068'},{name:'Sterling Bank',code:'232'},{name:'Taj Bank',code:'302'},
+  {name:'Titan Trust Bank',code:'102'},{name:'Union Bank of Nigeria',code:'032'},{name:'United Bank for Africa (UBA)',code:'033'},
+  {name:'Unity Bank',code:'215'},{name:'Wema Bank',code:'035'},{name:'Zenith Bank',code:'057'},
+];
+
+const CUISINES = ['Nigerian','Continental','Chinese','Indian','Italian','Fast Food','Seafood','Vegetarian','Grills & BBQ','Pastries & Bakery','Pizza','Burgers'];
+
+const AuthCtx = createContext(null);
+const useAuth = () => useContext(AuthCtx);
+
+function AuthProvider({children}) {
+  const [user,setUser]=useState(null); const [restaurant,setRestaurant]=useState(null); const [loading,setLoading]=useState(true);
+  useEffect(()=>{ const u=localStorage.getItem('r_user'); if(u){ setUser(JSON.parse(u)); api.get('/restaurants/me').then(r=>setRestaurant(r.data)).catch(()=>{}); } setLoading(false); },[]);
+  const login=async(email,password)=>{ const {data}=await api.post('/auth/login',{email,password}); if(data.user.role!=='restaurant') throw new Error('Not a restaurant account'); localStorage.setItem('r_token',data.token); localStorage.setItem('r_user',JSON.stringify(data.user)); setUser(data.user); const r=await api.get('/restaurants/me'); setRestaurant(r.data); };
+  const logout=()=>{ localStorage.clear(); setUser(null); setRestaurant(null); };
+  if(loading) return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',fontSize:18}}>Loading...</div>;
+  return <AuthCtx.Provider value={{user,restaurant,setRestaurant,login,logout}}>{children}</AuthCtx.Provider>;
+}
+
+// ── REGISTER ──────────────────────────────────────────────────────────────────
+function Register({ onBack }) {
+  const [form,setForm]=useState({ownerName:'',email:'',password:'',phone:'',restaurantName:'',cuisineType:'',address:'',description:''});
+  const [loading,setLoading]=useState(false); const [success,setSuccess]=useState(false); const [error,setError]=useState('');
+  const handle=async e=>{ e.preventDefault(); if(!form.ownerName||!form.email||!form.password||!form.phone||!form.restaurantName||!form.cuisineType||!form.address) return setError('Please fill in all required fields'); setLoading(true); setError(''); try{ await axios.post(`${API}/auth/register-restaurant`,form); setSuccess(true); }catch(err){ setError(err.response?.data?.message||err.message); }finally{ setLoading(false); } };
+  if(success) return (
+    <div style={{display:'flex',height:'100vh',alignItems:'center',justifyContent:'center',background:C.bg}}>
+      <div style={{background:'#fff',borderRadius:24,padding:48,maxWidth:480,textAlign:'center',boxShadow:'0 4px 24px rgba(0,0,0,0.08)'}}>
+        <div style={{fontSize:64,marginBottom:16}}>🎉</div>
+        <h2 style={{fontSize:26,fontWeight:800,marginBottom:8}}>Application Submitted!</h2>
+        <p style={{color:C.gray,fontSize:15,lineHeight:1.6,marginBottom:8}}>Our team will review and activate your account within <strong>24 hours</strong>.</p>
+        <div style={{background:'#F0FDF4',borderRadius:12,padding:16,marginBottom:28,border:'1px solid #BBF7D0'}}><p style={{color:'#15803D',fontWeight:600,fontSize:13,margin:0}}>✓ Restaurant: {form.restaurantName}<br/>✓ Cuisine: {form.cuisineType}<br/>✓ Address: {form.address}</p></div>
+        <button onClick={onBack} style={{...btn(C.primary),padding:'12px 32px',fontSize:15}}>← Back to Login</button>
+      </div>
+    </div>
+  );
+  return (
+    <div style={{display:'flex',minHeight:'100vh',background:C.bg}}>
+      <div style={{width:300,background:C.primary,padding:40,display:'flex',flexDirection:'column',justifyContent:'center',position:'sticky',top:0,height:'100vh',flexShrink:0}}>
+        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:32}}><div style={{width:48,height:48,borderRadius:12,background:'rgba(255,255,255,0.2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:24}}>🍽️</div><div><div style={{color:'#fff',fontWeight:800,fontSize:20}}>DoorBite</div><div style={{color:'rgba(255,255,255,0.7)',fontSize:12}}>Restaurant Partner</div></div></div>
+        <h2 style={{color:'#fff',fontWeight:800,fontSize:20,marginBottom:8}}>Grow your restaurant with us</h2>
+        <p style={{color:'rgba(255,255,255,0.8)',fontSize:13,lineHeight:1.6,marginBottom:24}}>Join restaurants delivering to customers across Lagos.</p>
+        {[['📦','Get orders 24/7'],['💰','Get paid after every delivery'],['📊','Track earnings in real time'],['🛵','We handle the delivery'],['⭐','Build your restaurant rating']].map(([icon,text])=>(<div key={text} style={{display:'flex',alignItems:'center',gap:12,marginBottom:12}}><span style={{fontSize:18}}>{icon}</span><span style={{color:'rgba(255,255,255,0.9)',fontSize:13}}>{text}</span></div>))}
+        <button onClick={onBack} style={{...btn('rgba(255,255,255,0.15)'),marginTop:32,border:'1px solid rgba(255,255,255,0.3)',padding:'10px 20px'}}>← Already have an account</button>
+      </div>
+      <div style={{flex:1,overflowY:'auto',display:'flex',alignItems:'flex-start',justifyContent:'center',padding:40}}>
+        <form onSubmit={handle} style={{background:'#fff',borderRadius:24,padding:36,width:'100%',maxWidth:560,boxShadow:'0 4px 24px rgba(0,0,0,0.08)'}}>
+          <h2 style={{fontSize:26,fontWeight:800,marginBottom:4}}>Apply to Partner</h2>
+          <p style={{color:C.gray,marginBottom:28,fontSize:14}}>Fill in the details below and we'll review your application within 24 hours.</p>
+          {error&&<div style={{background:'#FEE2E2',color:C.error,padding:12,borderRadius:10,marginBottom:20,fontSize:13}}>{error}</div>}
+          <div style={{background:C.bg,borderRadius:12,padding:16,marginBottom:20}}>
+            <h3 style={{fontWeight:800,fontSize:15,marginBottom:14}}>👤 Owner Information</h3>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+              <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Full Name *</label><input style={inp} placeholder="Your full name" value={form.ownerName} onChange={e=>setForm({...form,ownerName:e.target.value})} /></div>
+              <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Phone Number *</label><input style={inp} placeholder="08012345678" value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} /></div>
+              <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Email Address *</label><input style={inp} type="email" placeholder="you@restaurant.com" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} /></div>
+              <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Password *</label><input style={inp} type="password" placeholder="Create a password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} /></div>
+            </div>
+          </div>
+          <div style={{background:C.bg,borderRadius:12,padding:16,marginBottom:20}}>
+            <h3 style={{fontWeight:800,fontSize:15,marginBottom:14}}>🏪 Restaurant Information</h3>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14}}>
+              <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Restaurant Name *</label><input style={inp} placeholder="e.g. Mama's Kitchen" value={form.restaurantName} onChange={e=>setForm({...form,restaurantName:e.target.value})} /></div>
+              <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Cuisine Type *</label><select style={{...inp,height:44,cursor:'pointer',background:'#fff'}} value={form.cuisineType} onChange={e=>setForm({...form,cuisineType:e.target.value})}><option value="">Select cuisine type...</option>{CUISINES.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+            </div>
+            <div style={{marginBottom:14}}><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Restaurant Address *</label><input style={inp} placeholder="e.g. 12 Admiralty Way, Lekki Phase 1, Lagos" value={form.address} onChange={e=>setForm({...form,address:e.target.value})} /></div>
+            <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Description <span style={{color:C.gray,fontWeight:400}}>(optional)</span></label><textarea style={{...inp,height:80,resize:'vertical'}} placeholder="Tell customers what makes your restaurant special..." value={form.description} onChange={e=>setForm({...form,description:e.target.value})} /></div>
+          </div>
+          <div style={{background:'#FFF7ED',borderRadius:12,padding:14,marginBottom:20,border:'1px solid #FED7AA'}}><p style={{color:'#92400E',fontSize:13,margin:0}}>📋 By submitting, you agree to DoorBite's partner terms. We charge a <strong>10% platform fee</strong> on all orders.</p></div>
+          <button type="submit" style={{...btn(C.primary),width:'100%',padding:16,fontSize:16}} disabled={loading}>{loading?'⏳ Submitting application...':'🚀 Submit Application'}</button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── LOGIN ─────────────────────────────────────────────────────────────────────
+function Login({ onRegister }) {
+  const {login}=useAuth();
+  const [email,setEmail]=useState(''); const [password,setPassword]=useState(''); const [error,setError]=useState(''); const [loading,setLoading]=useState(false);
+  const handle=async e=>{ e.preventDefault(); setLoading(true); setError(''); try{ await login(email,password); }catch(err){ setError(err.response?.data?.message||err.message); }finally{ setLoading(false); } };
+  return (
+    <div style={{display:'flex',height:'100vh'}}>
+      <div style={{width:300,background:C.primary,padding:40,display:'flex',flexDirection:'column',justifyContent:'center'}}>
+        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:40}}><div style={{width:48,height:48,borderRadius:12,background:'rgba(255,255,255,0.2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:24}}>🍽️</div><div><div style={{color:'#fff',fontWeight:800,fontSize:20}}>DoorBite</div><div style={{color:'rgba(255,255,255,0.7)',fontSize:12}}>Restaurant Dashboard</div></div></div>
+        {['Real-time order queue','Full menu management','Revenue & analytics','Withdrawal via Paystack'].map(f=>(<div key={f} style={{display:'flex',alignItems:'center',gap:10,marginBottom:14}}><span style={{color:'#fff',fontWeight:800}}>✓</span><span style={{color:'rgba(255,255,255,0.9)',fontSize:15}}>{f}</span></div>))}
+        <div style={{marginTop:'auto',paddingTop:32,borderTop:'1px solid rgba(255,255,255,0.2)'}}><p style={{color:'rgba(255,255,255,0.7)',fontSize:13,marginBottom:12}}>Want to list your restaurant on DoorBite?</p><button onClick={onRegister} style={{...btn('rgba(255,255,255,0.2)'),width:'100%',padding:12,fontSize:14,border:'1px solid rgba(255,255,255,0.3)'}}>🏪 Partner with us →</button></div>
+      </div>
+      <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',background:C.bg}}>
+        <form onSubmit={handle} style={{background:'#fff',borderRadius:24,padding:36,width:420,boxShadow:'0 4px 24px rgba(0,0,0,0.08)'}}>
+          <h2 style={{fontSize:26,fontWeight:800,marginBottom:4}}>Welcome back</h2>
+          <p style={{color:C.gray,marginBottom:24,fontSize:14}}>Sign in to your restaurant account</p>
+          {error&&<div style={{background:'#FEE2E2',color:C.error,padding:12,borderRadius:10,marginBottom:14,fontSize:13}}>{error}</div>}
+          <label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Email</label>
+          <input style={{...inp,marginBottom:16}} placeholder="you@restaurant.com" value={email} onChange={e=>setEmail(e.target.value)} />
+          <label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Password</label>
+          <input style={{...inp,marginBottom:24}} type="password" placeholder="••••••••" value={password} onChange={e=>setPassword(e.target.value)} />
+          <button type="submit" style={{...btn(C.primary),width:'100%',padding:14,fontSize:16}} disabled={loading}>{loading?'Signing in...':'Sign In →'}</button>
+          <p style={{textAlign:'center',marginTop:16,fontSize:13,color:C.gray}}>New restaurant? <span onClick={onRegister} style={{color:C.primary,fontWeight:700,cursor:'pointer'}}>Apply to join →</span></p>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function Sidebar({page,setPage,pendingCount}) {
+  const {restaurant,logout}=useAuth();
+  const nav=[{k:'overview',l:'Overview',i:'📊'},{k:'orders',l:'Orders',i:'📦',badge:pendingCount},{k:'menu',l:'Menu',i:'🍽️'},{k:'analytics',l:'Analytics',i:'📈'},{k:'wallet',l:'Wallet',i:'💰'},{k:'settings',l:'Settings',i:'⚙️'}];
+  return (
+    <div style={{width:220,background:C.dark,height:'100vh',display:'flex',flexDirection:'column',padding:'24px 16px',position:'sticky',top:0}}>
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:20}}><div style={{width:40,height:40,borderRadius:10,background:C.primary,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20}}>🍽️</div><div><div style={{color:'#fff',fontWeight:800,fontSize:15}}>DoorBite</div><div style={{color:'#666',fontSize:10,letterSpacing:1}}>RESTAURANT</div></div></div>
+      <div style={{background:'#2A2A2A',borderRadius:12,padding:12,marginBottom:20}}>
+        {restaurant?.logo && <img src={restaurant.logo} alt="" style={{width:40,height:40,borderRadius:8,objectFit:'cover',marginBottom:8,display:'block'}} />}
+        <div style={{color:'#fff',fontWeight:700,fontSize:14}}>{restaurant?.name||'My Restaurant'}</div>
+        <div style={{color:restaurant?.isOpen?C.success:'#666',fontSize:12,marginTop:4,fontWeight:600}}>{restaurant?.isOpen?'● Open':'● Closed'}</div>
+      </div>
+      <div style={{flex:1}}>
+        {nav.map(n=>(<div key={n.k} onClick={()=>setPage(n.k)} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,cursor:'pointer',marginBottom:2,background:page===n.k?C.primary:'transparent',color:page===n.k?'#fff':'#888',fontWeight:600,fontSize:14}}><span>{n.i}</span><span style={{flex:1}}>{n.l}</span>{n.badge>0&&<span style={{background:C.error,color:'#fff',borderRadius:10,padding:'2px 7px',fontSize:11,fontWeight:800}}>{n.badge}</span>}</div>))}
+      </div>
+      <div onClick={logout} style={{color:'#666',cursor:'pointer',padding:'10px 12px',fontWeight:600}}>↩ Sign out</div>
+    </div>
+  );
+}
+
+function Overview({setPage}) {
+  const {restaurant}=useAuth();
+  const [analytics,setAnalytics]=useState(null);
+  const [liveOrders,setLiveOrders]=useState([]);
+  const socketRef=useRef(null);
+  useEffect(()=>{
+    api.get('/restaurants/analytics').then(r=>setAnalytics(r.data)).catch(()=>{});
+    api.get('/orders/restaurant').then(r=>setLiveOrders(r.data.filter(o=>['pending','confirmed','preparing'].includes(o.status)).slice(0,5))).catch(()=>{});
+    if(!restaurant) return;
+    const socket=io(SOCKET); socketRef.current=socket;
+    socket.emit('restaurant:join',restaurant._id);
+    socket.on('order:new',order=>setLiveOrders(prev=>[order,...prev.slice(0,4)]));
+    socket.on('order:status',({orderId,status})=>setLiveOrders(prev=>prev.map(o=>o._id===orderId?{...o,status}:o).filter(o=>!['delivered','rejected','cancelled'].includes(o.status))));
+    return()=>socket.disconnect();
+  },[restaurant]);
+  const confirmOrder=async(orderId,prepTime)=>{ await api.patch(`/orders/${orderId}/status`,{status:'confirmed',prepTime}); setLiveOrders(prev=>prev.map(o=>o._id===orderId?{...o,status:'confirmed',prepTime}:o)); };
+  const rejectOrder=async(orderId)=>{ await api.patch(`/orders/${orderId}/status`,{status:'rejected'}); setLiveOrders(prev=>prev.filter(o=>o._id!==orderId)); };
+  const markReady=async(orderId)=>{ await api.patch(`/orders/${orderId}/status`,{status:'ready_for_pickup'}); setLiveOrders(prev=>prev.filter(o=>o._id!==orderId)); };
+  const now=new Date();
+  const greeting=now.getHours()<12?'Good morning':now.getHours()<17?'Good afternoon':'Good evening';
+  const pending=liveOrders.filter(o=>o.status==='pending').length;
+  return (
+    <div style={{padding:28,overflowY:'auto',flex:1}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:24}}>
+        <div><h1 style={{fontSize:26,fontWeight:800}}>{greeting}, {restaurant?.name?.split(' ')[0]} 👋</h1><p style={{color:C.gray}}>{now.toLocaleDateString('en-US',{weekday:'long',day:'numeric',month:'long'})}</p></div>
+        {pending>0&&<div onClick={()=>setPage('orders')} style={{background:'#FEF3C7',border:'1px solid #F59E0B',padding:'8px 16px',borderRadius:20,cursor:'pointer',fontWeight:700,fontSize:13,color:'#92400E'}}>🔔 {pending} new order{pending>1?'s':''} need attention</div>}
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr',gap:14,marginBottom:14}}>
+        <div style={{...card,background:C.primary,marginBottom:0}}><div style={{color:'rgba(255,255,255,0.7)',fontSize:11,fontWeight:700,letterSpacing:0.5}}>TODAY'S REVENUE</div><div style={{color:'#fff',fontSize:28,fontWeight:800,margin:'4px 0'}}>₦{(analytics?.todayRevenue||0).toLocaleString()}</div><div style={{color:'rgba(255,255,255,0.6)',fontSize:12}}>{analytics?.todayOrders||0} orders</div></div>
+        {[['PENDING',pending,'Need confirmation'],['IN KITCHEN',liveOrders.filter(o=>o.status==='preparing').length,'Being prepared'],['WALLET','₦'+(analytics?.walletBalance||0).toLocaleString(),'Available balance']].map(([l,v,s])=>(<div key={l} style={{...card,marginBottom:0}}><div style={{color:C.gray,fontSize:11,fontWeight:700,letterSpacing:0.5}}>{l}</div><div style={{fontSize:22,fontWeight:800,margin:'4px 0'}}>{v}</div><div style={{color:C.gray,fontSize:12}}>{s}</div></div>))}
+      </div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}><h2 style={{fontSize:18,fontWeight:800}}>Live Orders</h2><span onClick={()=>setPage('orders')} style={{color:C.primary,fontWeight:700,cursor:'pointer'}}>View all →</span></div>
+      {liveOrders.length===0?(<div style={card}><p style={{color:C.gray,textAlign:'center',padding:20}}>No active orders right now 🎉</p></div>):liveOrders.map(order=>(
+        <div key={order._id} style={{...card,borderLeft:`4px solid ${C.primary}`}}>
+          <div style={{display:'inline-block',background:'#FFF7ED',color:C.primary,padding:'3px 10px',borderRadius:20,fontSize:12,fontWeight:700,marginBottom:10}}>★ {order.status==='pending'?'New Order':order.status}</div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+            <div><div style={{color:C.gray,fontSize:12}}>#{order.orderCode} · {new Date(order.createdAt).toLocaleTimeString()}</div><div style={{fontWeight:700,fontSize:16}}>{order.customer?.name}</div><div style={{color:C.gray,fontSize:13}}>{order.items?.map(i=>`${i.name} ×${i.quantity}`).join(' · ')}</div></div>
+            <div style={{textAlign:'right'}}><div style={{fontSize:20,fontWeight:800}}>₦{order.total?.toLocaleString()}</div><div style={{fontSize:12,color:C.success,fontWeight:600}}>You get: ₦{Math.round((order.subtotal||0)*0.90).toLocaleString()}</div></div>
+          </div>
+          {order.status==='pending'&&(<div><div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,flexWrap:'wrap'}}><span style={{color:C.gray,fontSize:13,fontWeight:600}}>Prep time:</span>{[10,15,20,30,45].map(t=><button key={t} onClick={()=>confirmOrder(order._id,t)} style={{...btn('#f5f5f5',C.dark),borderRadius:20,padding:'5px 12px'}}>{t}m</button>)}</div><div style={{display:'flex',gap:8}}><button onClick={()=>rejectOrder(order._id)} style={{...btn('#fff'),flex:1,color:C.error,border:`1px solid ${C.error}`}}>✕ Reject</button><button onClick={()=>confirmOrder(order._id,20)} style={{...btn(C.primary),flex:2}}>✓ Confirm (20 min)</button></div></div>)}
+          {order.status==='confirmed'&&<button onClick={()=>api.patch(`/orders/${order._id}/status`,{status:'preparing'}).then(()=>setLiveOrders(prev=>prev.map(o=>o._id===order._id?{...o,status:'preparing'}:o)))} style={btn(C.warning)}>Start Preparing</button>}
+          {order.status==='preparing'&&<button onClick={()=>markReady(order._id)} style={btn(C.success)}>✓ Mark Ready for Pickup</button>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Orders() {
+  const {restaurant}=useAuth();
+  const [orders,setOrders]=useState([]);
+  const [tab,setTab]=useState('pending');
+  const socketRef=useRef(null);
+  const TABS={pending:['pending'],preparing:['confirmed','preparing'],'en route':['ready_for_pickup','accepted','picked_up'],done:['delivered','rejected','cancelled']};
+  useEffect(()=>{
+    api.get('/orders/restaurant').then(r=>setOrders(r.data)).catch(()=>{});
+    if(!restaurant) return;
+    const socket=io(SOCKET); socketRef.current=socket;
+    socket.emit('restaurant:join',restaurant._id);
+    socket.on('order:new',o=>setOrders(prev=>[o,...prev]));
+    socket.on('order:status',({orderId,status})=>setOrders(prev=>prev.map(o=>o._id===orderId?{...o,status}:o)));
+    return()=>socket.disconnect();
+  },[restaurant]);
+  const update=async(id,status,extra={})=>{ await api.patch(`/orders/${id}/status`,{status,...extra}); setOrders(prev=>prev.map(o=>o._id===id?{...o,status,...extra}:o)); };
+  const filtered=orders.filter(o=>TABS[tab]?.includes(o.status));
+  const SC={pending:C.warning,confirmed:'#3B82F6',preparing:'#8B5CF6',ready_for_pickup:'#06B6D4',delivered:C.success,rejected:C.error,cancelled:C.gray};
+  return (
+    <div style={{padding:28,overflowY:'auto',flex:1}}>
+      <h1 style={{fontSize:26,fontWeight:800,marginBottom:20}}>Orders</h1>
+      <div style={{display:'flex',gap:8,marginBottom:20,flexWrap:'wrap'}}>
+        {Object.keys(TABS).map(t=>{ const count=t==='pending'?orders.filter(o=>o.status==='pending').length:0; return <button key={t} onClick={()=>setTab(t)} style={{...btn(tab===t?C.primary:'#fff'),color:tab===t?'#fff':C.gray,border:`1px solid ${C.border}`,borderRadius:20,textTransform:'capitalize'}}>{t}{count>0?` (${count})`:''}</button>; })}
+      </div>
+      {filtered.length===0?<p style={{color:C.gray,textAlign:'center',marginTop:60}}>No {tab} orders</p>:filtered.map(order=>(
+        <div key={order._id} style={{...card,borderLeft:order.status==='pending'?`4px solid ${C.primary}`:'none'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+            <div><span style={{color:C.gray,fontSize:12}}>#{order.orderCode} · {order.customer?.name} · {order.customer?.phone}</span><div style={{fontWeight:700,fontSize:15,marginTop:2}}>{order.items?.map(i=>`${i.name} ×${i.quantity}`).join(', ')}</div></div>
+            <div style={{textAlign:'right'}}><div style={{fontSize:20,fontWeight:800}}>₦{order.total?.toLocaleString()}</div><div style={{fontSize:12,color:C.success,fontWeight:600}}>Your cut: ₦{Math.round((order.subtotal||0)*0.90).toLocaleString()}</div><span style={{background:(SC[order.status]||'#ccc')+'22',color:SC[order.status]||'#ccc',padding:'3px 10px',borderRadius:20,fontSize:12,fontWeight:700}}>{order.status}</span></div>
+          </div>
+          {order.status==='pending'&&(<div style={{display:'flex',gap:8,marginTop:10}}><button style={{...btn('#fff'),flex:1,color:C.error,border:`1px solid ${C.error}`}} onClick={()=>update(order._id,'rejected')}>✕ Reject</button><button style={{...btn(C.primary),flex:2}} onClick={()=>update(order._id,'confirmed',{prepTime:20})}>✓ Confirm</button></div>)}
+          {order.status==='confirmed'&&<button style={{...btn(C.warning),marginTop:10}} onClick={()=>update(order._id,'preparing')}>Start Preparing</button>}
+          {order.status==='preparing'&&<button style={{...btn(C.success),marginTop:10}} onClick={()=>update(order._id,'ready_for_pickup')}>Mark Ready for Pickup</button>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── MENU ─────────────────────────────────────────────────────────────────────
+function Menu() {
+  const {restaurant}=useAuth();
+  const [items,setItems]=useState([]);
+  const [cat,setCat]=useState('All');
+  const [showForm,setShowForm]=useState(false);
+  const [form,setForm]=useState({name:'',price:'',category:'Mains',description:'',image:''});
+  const [uploading,setUploading]=useState(false);
+  const fetch_=()=>{ if(restaurant) api.get(`/menu/${restaurant._id}`).then(r=>setItems(r.data)).catch(()=>{}); };
+  useEffect(()=>{ fetch_(); },[restaurant]);
+
+  const handleImageUpload=async e=>{
+    const file=e.target.files[0]; if(!file) return;
+    setUploading(true);
+    try{ const url=await uploadToCloudinary(file); setForm(f=>({...f,image:url})); }
+    catch(err){ alert('Image upload failed: '+err.message); }
+    finally{ setUploading(false); }
+  };
+
+  const add=async()=>{
+    if(!form.name||!form.price) return;
+    await api.post('/menu',{...form,price:Number(form.price)});
+    setForm({name:'',price:'',category:'Mains',description:'',image:''});
+    setShowForm(false); fetch_();
+  };
+
+  const toggle=async item=>{ await api.patch(`/menu/${item._id}`,{isAvailable:!item.isAvailable}); fetch_(); };
+  const del=async id=>{ if(window.confirm('Delete this item?')){ await api.delete(`/menu/${id}`); fetch_(); } };
+  const filtered=cat==='All'?items:items.filter(i=>i.category===cat);
+
+  return (
+    <div style={{padding:28,overflowY:'auto',flex:1}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+        <div><h1 style={{fontSize:26,fontWeight:800}}>Menu</h1><p style={{color:C.gray}}>{items.length} items</p></div>
+        <button style={btn(C.primary)} onClick={()=>setShowForm(!showForm)}>+ Add Item</button>
+      </div>
+
+      {showForm&&(
+        <div style={{...card,marginBottom:20,borderTop:`3px solid ${C.primary}`}}>
+          <h3 style={{fontWeight:800,marginBottom:14}}>New Menu Item</h3>
+          <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:12,marginBottom:12}}>
+            <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Item Name *</label><input style={inp} placeholder="e.g. Jollof Rice" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} /></div>
+            <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Price (₦) *</label><input style={inp} type="number" placeholder="2500" value={form.price} onChange={e=>setForm({...form,price:e.target.value})} /></div>
+          </div>
+          <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
+            {['Mains','Sides','Drinks','Desserts'].map(c=><button key={c} onClick={()=>setForm({...form,category:c})} style={{...btn(form.category===c?C.primary:'#f5f5f5'),color:form.category===c?'#fff':C.gray,borderRadius:20}}>{c}</button>)}
+          </div>
+          <div style={{marginBottom:12}}><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Description</label><textarea style={{...inp,height:70,resize:'vertical'}} placeholder="Describe this item..." value={form.description} onChange={e=>setForm({...form,description:e.target.value})} /></div>
+
+          {/* Food image upload */}
+          <div style={{marginBottom:16}}>
+            <label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:8}}>📸 Food Photo</label>
+            <div style={{display:'flex',alignItems:'center',gap:14}}>
+              {form.image ? (
+                <div style={{position:'relative'}}>
+                  <img src={form.image} alt="" style={{width:80,height:80,borderRadius:12,objectFit:'cover',border:`2px solid ${C.success}`}} />
+                  <button onClick={()=>setForm({...form,image:''})} style={{position:'absolute',top:-8,right:-8,width:22,height:22,borderRadius:'50%',background:C.error,color:'#fff',border:'none',cursor:'pointer',fontSize:12,display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
+                </div>
+              ) : (
+                <div style={{width:80,height:80,borderRadius:12,background:'#f5f5f5',border:`2px dashed ${C.border}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:28}}>🍽️</div>
+              )}
+              <div>
+                <label style={{...btn(C.primary),display:'inline-block',cursor:'pointer',padding:'8px 16px'}}>
+                  {uploading ? '⏳ Uploading...' : '📷 Upload Photo'}
+                  <input type="file" accept="image/*" onChange={handleImageUpload} style={{display:'none'}} disabled={uploading} />
+                </label>
+                <p style={{color:C.gray,fontSize:12,marginTop:6}}>JPG, PNG up to 5MB. Shown to customers on the menu.</p>
+              </div>
+            </div>
+          </div>
+
+          <div style={{display:'flex',gap:8}}>
+            <button style={{...btn('#f5f5f5'),color:C.gray}} onClick={()=>setShowForm(false)}>Cancel</button>
+            <button style={btn(C.primary)} onClick={add} disabled={uploading}>{uploading?'Uploading image...':'Add to Menu'}</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{display:'flex',gap:8,marginBottom:20,flexWrap:'wrap'}}>
+        {['All','Mains','Sides','Drinks','Desserts'].map(c=><button key={c} onClick={()=>setCat(c)} style={{...btn(cat===c?C.dark:'#fff'),color:cat===c?'#fff':C.gray,border:`1px solid ${C.border}`,borderRadius:20}}>{c}</button>)}
+      </div>
+
+      {filtered.map(item=>(
+        <div key={item._id} style={{...card,display:'flex',alignItems:'center',gap:14}}>
+          {/* Food image or fallback */}
+          <div style={{width:72,height:72,borderRadius:12,overflow:'hidden',flexShrink:0,background:'#f5f5f5',display:'flex',alignItems:'center',justifyContent:'center',fontSize:28}}>
+            {item.image ? <img src={item.image} alt={item.name} style={{width:72,height:72,objectFit:'cover'}} /> : '🍽️'}
+          </div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:700,fontSize:15}}>{item.name}</div>
+            <div style={{color:C.gray,fontSize:12}}>{item.category}{item.description?` · ${item.description}`:''}</div>
+            <div style={{color:C.primary,fontWeight:800,fontSize:15,marginTop:2}}>₦{item.price?.toLocaleString()}</div>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:12}}>
+            <span style={{color:item.isAvailable?C.success:C.error,fontWeight:600,fontSize:13}}>{item.isAvailable?'✓ Available':'✗ Off'}</span>
+            <input type="checkbox" checked={item.isAvailable} onChange={()=>toggle(item)} style={{width:18,height:18,cursor:'pointer'}} />
+            <button onClick={()=>del(item._id)} style={{...btn(C.error),padding:'5px 10px',fontSize:12}}>🗑️</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Analytics() {
+  const [data,setData]=useState(null);
+  useEffect(()=>{ api.get('/restaurants/analytics').then(r=>setData(r.data)).catch(()=>{}); },[]);
+const top = data?.topItems || [];
+const maxCount = top.length > 0 ? top[0].count : 1;  const grossRevenue=(data?.allTimeRevenue||0)/0.90;
+  const platformCut=grossRevenue-(data?.allTimeRevenue||0);
+  return (
+    <div style={{padding:28,overflowY:'auto',flex:1}}>
+      <h1 style={{fontSize:26,fontWeight:800,marginBottom:20}}>Analytics</h1>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
+        {[['TODAY',data?.todayRevenue,data?.todayOrders+' orders'],['THIS WEEK',data?.weekRevenue,data?.weekOrders+' orders'],['THIS MONTH',data?.monthRevenue,data?.monthOrders+' orders'],['ALL TIME',data?.allTimeRevenue,(data?.allTimeOrders||0)+' orders']].map(([l,v,s])=>(<div key={l} style={card}><div style={{color:C.gray,fontSize:10,fontWeight:700,letterSpacing:0.5}}>{l}</div><div style={{fontWeight:800,fontSize:22,margin:'4px 0'}}>₦{(v||0).toLocaleString()}</div><div style={{color:C.gray,fontSize:12}}>{s}</div></div>))}
+      </div>
+      <div style={{...card,borderTop:`3px solid ${C.error}`,marginBottom:20}}>
+        <h3 style={{fontWeight:800,marginBottom:4}}>📊 Earnings Breakdown</h3>
+        <p style={{color:C.gray,fontSize:13,marginBottom:16}}>DoorBite deducts 10% from every order as a platform fee</p>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14}}>
+          <div style={{background:'#F0FDF4',borderRadius:12,padding:16,borderLeft:`3px solid ${C.success}`}}><div style={{fontSize:11,fontWeight:700,color:C.gray,letterSpacing:0.5}}>GROSS REVENUE</div><div style={{fontSize:22,fontWeight:800,color:C.success,margin:'4px 0'}}>₦{Math.round(grossRevenue).toLocaleString()}</div><div style={{fontSize:12,color:C.gray}}>Customer payments</div></div>
+          <div style={{background:'#FEF2F2',borderRadius:12,padding:16,borderLeft:`3px solid ${C.error}`}}><div style={{fontSize:11,fontWeight:700,color:C.gray,letterSpacing:0.5}}>DOORBITE CUT (10%)</div><div style={{fontSize:22,fontWeight:800,color:C.error,margin:'4px 0'}}>₦{Math.round(platformCut).toLocaleString()}</div><div style={{fontSize:12,color:C.gray}}>Platform service fee</div></div>
+          <div style={{background:'#EFF6FF',borderRadius:12,padding:16,borderLeft:`3px solid #3B82F6`}}><div style={{fontSize:11,fontWeight:700,color:C.gray,letterSpacing:0.5}}>YOUR NET EARNINGS</div><div style={{fontSize:22,fontWeight:800,color:'#3B82F6',margin:'4px 0'}}>₦{(data?.allTimeRevenue||0).toLocaleString()}</div><div style={{fontSize:12,color:C.gray}}>90% of food orders</div></div>
+        </div>
+      </div>
+      <div style={card}>
+        <h3 style={{fontWeight:800,marginBottom:16}}>🏆 Top Menu Items</h3>
+{top.length === 0 ? (
+  <p style={{color:C.gray,textAlign:'center',padding:20}}>No orders yet — top items will appear here</p>
+) : top.map((item, i) => (
+  <div key={item.name} style={{display:'flex',alignItems:'center',gap:12,marginBottom:14}}>
+    <span style={{width:20,color:C.gray,fontWeight:800}}>{i+1}</span>
+    <span style={{flex:1,fontWeight:600}}>{item.name}</span>
+    <div style={{width:120,height:8,background:'#f5f5f5',borderRadius:4}}>
+      <div style={{width:`${(item.count/maxCount)*100}%`,height:'100%',background:C.primary,borderRadius:4}} />
+    </div>
+    <span style={{color:C.gray,fontWeight:700,width:40,textAlign:'right'}}>{item.count}×</span>
+  </div>
+))}      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+        <div style={card}><div style={{color:C.gray,fontSize:11,fontWeight:700}}>AVG ORDER VALUE</div><div style={{fontSize:28,fontWeight:800,margin:'4px 0'}}>₦{data?.allTimeOrders>0?Math.floor((data?.allTimeRevenue||0)/(data?.allTimeOrders||1)).toLocaleString():0}</div><div style={{color:C.gray,fontSize:12}}>per order (your 90%)</div></div>
+        <div style={card}><div style={{color:C.gray,fontSize:11,fontWeight:700}}>TOTAL ORDERS</div><div style={{fontSize:28,fontWeight:800,margin:'4px 0'}}>{data?.allTimeOrders||0}</div><div style={{color:C.gray,fontSize:12}}>all time delivered</div></div>
+      </div>
+    </div>
+  );
+}
+
+function Wallet() {
+  const {restaurant}=useAuth();
+  const [data,setData]=useState(null); const [withdrawals,setWithdrawals]=useState([]); const [wAmount,setWAmount]=useState(''); const [wLoading,setWLoading]=useState(false); const [loading,setLoading]=useState(true);
+  const refresh=()=>{ api.get('/restaurants/analytics').then(r=>setData(r.data)).catch(()=>{}); api.get('/withdrawals/my').then(r=>setWithdrawals(r.data)).catch(()=>{}).finally(()=>setLoading(false)); };
+  useEffect(()=>{ refresh(); },[]);
+  const requestWithdrawal=async()=>{ const amount=Number(wAmount); if(!amount||amount<100) return alert('Minimum withdrawal is ₦100'); if(amount>(data?.walletBalance||0)) return alert('Amount exceeds your wallet balance'); if(!restaurant?.bankDetails?.accountNumber) return alert('Please save your bank details in Settings first.'); setWLoading(true); try{ await api.post('/withdrawals',{amount}); alert('✅ Withdrawal request submitted!'); setWAmount(''); refresh(); }catch(err){ alert(err.response?.data?.message||err.message); }finally{ setWLoading(false); } };
+  const SC={pending:C.warning,approved:'#3B82F6',processing:'#8B5CF6',paid:C.success,rejected:C.error};
+  const statusIcon={pending:'🕐',approved:'✅',processing:'⏳',paid:'✅',rejected:'❌'};
+  return (
+    <div style={{padding:28,overflowY:'auto',flex:1}}>
+      <h1 style={{fontSize:26,fontWeight:800,marginBottom:4}}>💰 Wallet & Withdrawals</h1>
+      <p style={{color:C.gray,marginBottom:24}}>Manage your earnings and request payouts to your bank account</p>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,marginBottom:24}}>
+        <div style={{...card,background:C.success,marginBottom:0,color:'#fff'}}><div style={{color:'rgba(255,255,255,0.8)',fontSize:11,fontWeight:700,letterSpacing:0.5,marginBottom:4}}>AVAILABLE BALANCE</div><div style={{fontSize:32,fontWeight:800,margin:'6px 0'}}>₦{(data?.walletBalance||0).toLocaleString()}</div><div style={{color:'rgba(255,255,255,0.7)',fontSize:12}}>Ready to withdraw</div></div>
+        <div style={{...card,marginBottom:0}}><div style={{color:C.gray,fontSize:11,fontWeight:700,letterSpacing:0.5,marginBottom:4}}>ALL TIME EARNED</div><div style={{fontSize:28,fontWeight:800,margin:'6px 0'}}>₦{(data?.allTimeRevenue||0).toLocaleString()}</div><div style={{color:C.gray,fontSize:12}}>Your 90% net share</div></div>
+        <div style={{...card,marginBottom:0}}><div style={{color:C.gray,fontSize:11,fontWeight:700,letterSpacing:0.5,marginBottom:4}}>TOTAL ORDERS</div><div style={{fontSize:28,fontWeight:800,margin:'6px 0'}}>{data?.allTimeOrders||0}</div><div style={{color:C.gray,fontSize:12}}>Delivered all time</div></div>
+      </div>
+      <div style={{...card,borderTop:`4px solid ${C.success}`,marginBottom:24}}>
+        <h2 style={{fontSize:20,fontWeight:800,marginBottom:4}}>Request Withdrawal</h2>
+        <p style={{color:C.gray,fontSize:13,marginBottom:20}}>Processed via Paystack directly to your bank account. {!restaurant?.bankDetails?.accountNumber?<span style={{color:C.error,fontWeight:600}}> ⚠️ Add your bank details in Settings first.</span>:<span style={{color:C.success,fontWeight:600}}> ✓ Bank account on file.</span>}</p>
+        {restaurant?.bankDetails?.accountNumber&&(<div style={{background:'#F0FDF4',borderRadius:12,padding:14,marginBottom:20,display:'flex',alignItems:'center',gap:12,border:`1px solid #BBF7D0`}}><span style={{fontSize:28}}>🏦</span><div><div style={{fontWeight:700,fontSize:15}}>{restaurant.bankDetails.bankName}</div><div style={{color:C.gray,fontSize:13}}>{restaurant.bankDetails.accountNumber} · {restaurant.bankDetails.accountName}</div></div><span style={{marginLeft:'auto',background:'#DCFCE7',color:C.success,padding:'4px 12px',borderRadius:20,fontWeight:700,fontSize:12}}>✓ Active</span></div>)}
+        <label style={{fontSize:13,fontWeight:700,display:'block',marginBottom:8}}>Amount to Withdraw (₦)</label>
+        <div style={{display:'flex',gap:10,marginBottom:12,flexWrap:'wrap'}}>{[5000,10000,20000,50000].map(amt=><button key={amt} onClick={()=>setWAmount(String(amt))} style={{...btn(Number(wAmount)===amt?C.success:'#f0f0f0',Number(wAmount)===amt?'#fff':C.gray),borderRadius:20,padding:'8px 18px',fontSize:13}}>₦{(amt/1000).toFixed(0)}k</button>)}</div>
+        <input style={{...inp,fontSize:18,fontWeight:700,height:52,marginBottom:8}} type="number" placeholder="Or enter custom amount" value={wAmount} onChange={e=>setWAmount(e.target.value)} />
+        {wAmount&&Number(wAmount)>0&&<div style={{marginBottom:12,fontSize:13,color:C.gray}}>You will receive: <strong style={{color:C.success,fontSize:15}}>₦{Number(wAmount).toLocaleString()}</strong></div>}
+        <button style={{...btn(C.success),padding:'14px 36px',fontSize:16,opacity:(!wAmount||Number(wAmount)<100||wLoading)?0.5:1}} onClick={requestWithdrawal} disabled={!wAmount||Number(wAmount)<100||wLoading}>{wLoading?'⏳ Submitting...':'↗ Request Withdrawal'}</button>
+      </div>
+      <div style={card}>
+        <h2 style={{fontSize:18,fontWeight:800,marginBottom:16}}>Withdrawal History</h2>
+        {loading?<p style={{color:C.gray,textAlign:'center',padding:20}}>Loading...</p>:withdrawals.length===0?(<div style={{textAlign:'center',padding:48}}><div style={{fontSize:52,marginBottom:12}}>💸</div><p style={{color:C.gray,fontSize:15,fontWeight:600}}>No withdrawals yet</p></div>):withdrawals.map(w=>(
+          <div key={w._id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'16px 0',borderBottom:`1px solid ${C.border}`}}>
+            <div style={{display:'flex',alignItems:'center',gap:14}}><div style={{width:48,height:48,borderRadius:12,background:(SC[w.status]||C.gray)+'22',display:'flex',alignItems:'center',justifyContent:'center',fontSize:22}}>{statusIcon[w.status]||'🕐'}</div><div><div style={{fontWeight:800,fontSize:17}}>₦{w.amount?.toLocaleString()}</div><div style={{color:C.gray,fontSize:12,marginTop:2}}>{new Date(w.createdAt).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})} · {w.bankDetails?.bankName} · ****{w.bankDetails?.accountNumber?.slice(-4)}</div>{w.adminNote&&<div style={{color:C.warning,fontSize:12,marginTop:3}}>📝 {w.adminNote}</div>}</div></div>
+            <div style={{textAlign:'right'}}><span style={{background:(SC[w.status]||C.gray)+'22',color:SC[w.status]||C.gray,padding:'5px 14px',borderRadius:20,fontSize:13,fontWeight:700,textTransform:'capitalize',display:'inline-block',marginBottom:4}}>{w.status}</span>{w.status==='paid'&&<div style={{color:C.success,fontSize:11,fontWeight:600}}>✓ Paid to your bank</div>}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── SETTINGS ──────────────────────────────────────────────────────────────────
+function Settings() {
+  const {restaurant,setRestaurant}=useAuth();
+  const [form,setForm]=useState({name:'',phone:'',address:'',cuisineType:'',description:'',isOpen:false,openTime:'08:00',closeTime:'22:00',logo:''});
+  const [bankForm,setBankForm]=useState({bankName:'',accountNumber:'',accountName:'',bankCode:''});
+  const [saving,setSaving]=useState(false); const [savingBank,setSavingBank]=useState(false); const [uploadingLogo,setUploadingLogo]=useState(false);
+
+  useEffect(()=>{ if(restaurant){ setForm({name:restaurant.name||'',phone:restaurant.phone||'',address:restaurant.address||'',cuisineType:restaurant.cuisineType||'',description:restaurant.description||'',isOpen:restaurant.isOpen||false,openTime:restaurant.openTime||'08:00',closeTime:restaurant.closeTime||'22:00',logo:restaurant.logo||''}); if(restaurant.bankDetails) setBankForm(restaurant.bankDetails); } },[restaurant]);
+
+  const handleLogoUpload=async e=>{
+    const file=e.target.files[0]; if(!file) return;
+    setUploadingLogo(true);
+    try{
+      const url=await uploadToCloudinary(file);
+      setForm(f=>({...f,logo:url}));
+      // Save immediately
+      const {data}=await api.patch('/restaurants/me',{logo:url});
+      setRestaurant(data);
+      alert('✅ Restaurant photo updated!');
+    }catch(err){ alert('Upload failed: '+err.message); }
+    finally{ setUploadingLogo(false); }
+  };
+
+  const save=async()=>{ setSaving(true); try{ const {data}=await api.patch('/restaurants/me',form); setRestaurant(data); alert('Settings saved!'); }catch{ alert('Failed to save'); }finally{ setSaving(false); } };
+  const saveBank=async()=>{ if(!bankForm.accountNumber||!bankForm.bankName||!bankForm.accountName) return alert('Please fill in all bank details'); setSavingBank(true); try{ const {data}=await api.patch('/restaurants/me',{bankDetails:bankForm}); setRestaurant(data); alert('✅ Bank details saved!'); }catch{ alert('Failed to save bank details'); }finally{ setSavingBank(false); } };
+
+  return (
+    <div style={{padding:28,overflowY:'auto',flex:1}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
+        <h1 style={{fontSize:26,fontWeight:800}}>Settings</h1>
+        <button style={btn(C.primary)} onClick={save} disabled={saving}>{saving?'Saving...':'💾 Save Changes'}</button>
+      </div>
+
+      {/* Restaurant Photo */}
+      <div style={{...card,marginBottom:16}}>
+        <h3 style={{fontWeight:800,marginBottom:14}}>📸 Restaurant Photo</h3>
+        <p style={{color:C.gray,fontSize:13,marginBottom:16}}>This photo appears on the customer app home screen and restaurant page.</p>
+        <div style={{display:'flex',alignItems:'center',gap:20}}>
+          <div style={{width:120,height:90,borderRadius:14,overflow:'hidden',background:'#f5f5f5',border:`2px dashed ${C.border}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:36,flexShrink:0}}>
+            {form.logo ? <img src={form.logo} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : '🏪'}
+          </div>
+          <div>
+            <label style={{...btn(C.primary),display:'inline-block',cursor:'pointer',padding:'10px 20px',fontSize:14}}>
+              {uploadingLogo ? '⏳ Uploading...' : '📷 Upload Photo'}
+              <input type="file" accept="image/*" onChange={handleLogoUpload} style={{display:'none'}} disabled={uploadingLogo} />
+            </label>
+            <p style={{color:C.gray,fontSize:12,marginTop:8}}>JPG or PNG, at least 400×300px. Shows to customers on the app.</p>
+            {form.logo && <p style={{color:C.success,fontSize:12,marginTop:4,fontWeight:600}}>✓ Photo uploaded successfully</p>}
+          </div>
+        </div>
+      </div>
+
+      {/* Status */}
+      <div style={{...card,marginBottom:16}}>
+        <h3 style={{fontWeight:800,marginBottom:14}}>🟢 Restaurant Status</h3>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}><span style={{fontWeight:600}}>Currently {form.isOpen?'Open':'Closed'}</span><input type="checkbox" checked={form.isOpen} onChange={e=>setForm({...form,isOpen:e.target.checked})} style={{width:22,height:22,cursor:'pointer',accentColor:C.primary}} /></div>
+        <p style={{color:C.gray,fontSize:13,marginBottom:14}}>{form.isOpen?'Accepting orders from customers':'Not accepting orders'}</p>
+        <div style={{display:'grid',gridTemplateColumns:'1fr auto 1fr',gap:12,alignItems:'end'}}>
+          <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Opens</label><input style={inp} value={form.openTime} onChange={e=>setForm({...form,openTime:e.target.value})} /></div>
+          <span style={{paddingBottom:10,color:C.gray,fontWeight:700}}>→</span>
+          <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Closes</label><input style={inp} value={form.closeTime} onChange={e=>setForm({...form,closeTime:e.target.value})} /></div>
+        </div>
+      </div>
+
+      {/* Restaurant details */}
+      <div style={{...card,marginBottom:16}}>
+        <h3 style={{fontWeight:800,marginBottom:14}}>🏪 Restaurant Details</h3>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+          {[['Restaurant Name','name'],['Phone','phone'],['Address','address'],['Cuisine Type','cuisineType']].map(([l,k])=>(<div key={k}><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>{l}</label><input style={inp} value={form[k]} onChange={e=>setForm({...form,[k]:e.target.value})} /></div>))}
+        </div>
+        <div style={{marginTop:14}}><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Description</label><textarea style={{...inp,height:90,resize:'vertical'}} value={form.description} onChange={e=>setForm({...form,description:e.target.value})} /></div>
+      </div>
+
+      {/* Bank details */}
+      <div style={{...card,borderTop:`3px solid ${C.success}`}}>
+        <h3 style={{fontWeight:800,marginBottom:4}}>🏦 Bank Details for Withdrawals</h3>
+        <p style={{color:C.gray,fontSize:13,marginBottom:16}}>Required to receive withdrawal payments via Paystack</p>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14}}>
+          <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Bank Name</label><select style={{...inp,cursor:'pointer',background:'#fff',height:44}} value={bankForm.bankName} onChange={e=>{ const s=NIGERIAN_BANKS.find(b=>b.name===e.target.value); setBankForm({...bankForm,bankName:e.target.value,bankCode:s?.code||''}); }}><option value="">Select your bank...</option>{NIGERIAN_BANKS.map(bank=>(<option key={bank.code} value={bank.name}>{bank.name}</option>))}</select></div>
+          <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Account Number</label><input style={inp} placeholder="10-digit number" maxLength={10} value={bankForm.accountNumber} onChange={e=>setBankForm({...bankForm,accountNumber:e.target.value})} /></div>
+          <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Account Name</label><input style={inp} placeholder="As on bank records" value={bankForm.accountName} onChange={e=>setBankForm({...bankForm,accountName:e.target.value})} /></div>
+          <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Bank Code <span style={{color:C.success,fontSize:11}}>(auto-filled)</span></label><input style={{...inp,background:'#f9fafb',color:C.gray}} value={bankForm.bankCode} readOnly /></div>
+        </div>
+        <button style={{...btn(C.success),padding:'10px 24px',fontSize:14}} onClick={saveBank} disabled={savingBank}>{savingBank?'Saving...':'✓ Save Bank Details'}</button>
+      </div>
+    </div>
+  );
+}
+
+function AppContent() {
+  const {user}=useAuth();
+  const [page,setPage]=useState('overview');
+  const [pendingCount,setPendingCount]=useState(0);
+  const [showRegister,setShowRegister]=useState(false);
+  useEffect(()=>{ if(user) api.get('/orders/restaurant').then(r=>setPendingCount(r.data.filter(o=>o.status==='pending').length)).catch(()=>{}); },[user]);
+  if(!user) return showRegister ? <Register onBack={()=>setShowRegister(false)} /> : <Login onRegister={()=>setShowRegister(true)} />;
+  const pages={overview:<Overview setPage={setPage}/>,orders:<Orders/>,menu:<Menu/>,analytics:<Analytics/>,wallet:<Wallet/>,settings:<Settings/>};
+  return (
+    <div style={{display:'flex',width:'100%'}}>
+      <Sidebar page={page} setPage={setPage} pendingCount={pendingCount} />
+      <div style={{flex:1,overflowY:'auto',background:'#F8F8F8'}}>{pages[page]||<Overview setPage={setPage}/>}</div>
+    </div>
+  );
+}
+
+export default function App() { return <AuthProvider><AppContent /></AuthProvider>; }
