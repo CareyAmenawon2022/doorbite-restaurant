@@ -5,9 +5,6 @@ import { io } from 'socket.io-client';
 const API = 'https://api.doorbite.ng/api';
 const SOCKET = 'https://api.doorbite.ng';
 
-// const API = 'http://10.228.50.56:5000/api';
-// const SOCKET = 'http://10.228.50.56:5000';
-
 const CLOUD_NAME = 'du34xyidb';
 const UPLOAD_PRESET = 'quicky';
 
@@ -28,6 +25,82 @@ async function uploadToCloudinary(file) {
   const data = await res.json();
   if (data.secure_url) return data.secure_url;
   throw new Error(data.error?.message || 'Upload failed');
+}
+
+// ── NEW ORDER ALERT — sound + browser notification + tab flash ────────────────
+let tabFlashInterval = null;
+const originalTitle = document.title;
+
+function playOrderSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    // Three beeps — classic restaurant bell pattern
+    [0, 0.25, 0.5].forEach(startOffset => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = 880;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0.8, ctx.currentTime + startOffset);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + startOffset + 0.2);
+      osc.start(ctx.currentTime + startOffset);
+      osc.stop(ctx.currentTime + startOffset + 0.25);
+    });
+  } catch {}
+}
+
+function flashTabTitle(orderCode) {
+  if (tabFlashInterval) clearInterval(tabFlashInterval);
+  let on = true;
+  tabFlashInterval = setInterval(() => {
+    document.title = on ? `🔔 NEW ORDER #${orderCode}!` : originalTitle;
+    on = !on;
+  }, 800);
+  // Stop flashing after 30 seconds
+  setTimeout(() => {
+    if (tabFlashInterval) clearInterval(tabFlashInterval);
+    document.title = originalTitle;
+  }, 30000);
+}
+
+function stopTabFlash() {
+  if (tabFlashInterval) clearInterval(tabFlashInterval);
+  document.title = originalTitle;
+}
+
+async function showBrowserNotification(order) {
+  try {
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'default') {
+      await Notification.requestPermission();
+    }
+    if (Notification.permission === 'granted') {
+      const n = new Notification('🍽️ New Order!', {
+        body: `#${order.orderCode} — ${order.items?.map(i=>`${i.name} ×${i.quantity}`).join(', ')} — ₦${order.total?.toLocaleString()}`,
+        icon: '/favicon.ico',
+        badge: '/favicon.ico',
+        tag: `order-${order._id}`,       // replaces previous notification instead of stacking
+        requireInteraction: true,         // stays until dismissed
+      });
+      n.onclick = () => { window.focus(); n.close(); };
+    }
+  } catch {}
+}
+
+function fireNewOrderAlert(order) {
+  playOrderSound();
+  flashTabTitle(order.orderCode);
+  showBrowserNotification(order);
+}
+
+// ── REQUEST BROWSER NOTIFICATION PERMISSION on app load ──────────────────────
+if ('Notification' in window && Notification.permission === 'default') {
+  // Defer until user interaction so browser doesn't block it
+  window.addEventListener('click', function askOnce() {
+    Notification.requestPermission();
+    window.removeEventListener('click', askOnce);
+  }, { once: true });
 }
 
 const NIGERIAN_BANKS = [
@@ -51,7 +124,7 @@ function AuthProvider({children}) {
   const [user,setUser]=useState(null); const [restaurant,setRestaurant]=useState(null); const [loading,setLoading]=useState(true);
   useEffect(()=>{ const u=localStorage.getItem('r_user'); if(u){ setUser(JSON.parse(u)); api.get('/restaurants/me').then(r=>setRestaurant(r.data)).catch(()=>{}); } setLoading(false); },[]);
   const login=async(email,password)=>{ const {data}=await api.post('/auth/login',{email,password}); if(data.user.role!=='restaurant') throw new Error('Not a restaurant account'); localStorage.setItem('r_token',data.token); localStorage.setItem('r_user',JSON.stringify(data.user)); setUser(data.user); const r=await api.get('/restaurants/me'); setRestaurant(r.data); };
-  const logout=()=>{ localStorage.clear(); setUser(null); setRestaurant(null); };
+  const logout=()=>{ localStorage.clear(); setUser(null); setRestaurant(null); stopTabFlash(); };
   if(loading) return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',fontSize:18}}>Loading...</div>;
   return <AuthCtx.Provider value={{user,restaurant,setRestaurant,login,logout}}>{children}</AuthCtx.Provider>;
 }
@@ -153,39 +226,47 @@ function Sidebar({page,setPage,pendingCount}) {
         <div style={{color:restaurant?.isOpen?C.success:'#666',fontSize:12,marginTop:4,fontWeight:600}}>{restaurant?.isOpen?'● Open':'● Closed'}</div>
       </div>
       <div style={{flex:1}}>
-        {nav.map(n=>(<div key={n.k} onClick={()=>setPage(n.k)} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,cursor:'pointer',marginBottom:2,background:page===n.k?C.primary:'transparent',color:page===n.k?'#fff':'#888',fontWeight:600,fontSize:14}}><span>{n.i}</span><span style={{flex:1}}>{n.l}</span>{n.badge>0&&<span style={{background:C.error,color:'#fff',borderRadius:10,padding:'2px 7px',fontSize:11,fontWeight:800}}>{n.badge}</span>}</div>))}
+        {nav.map(n=>(<div key={n.k} onClick={()=>{ setPage(n.k); if(n.k==='orders') stopTabFlash(); }} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,cursor:'pointer',marginBottom:2,background:page===n.k?C.primary:'transparent',color:page===n.k?'#fff':'#888',fontWeight:600,fontSize:14}}><span>{n.i}</span><span style={{flex:1}}>{n.l}</span>{n.badge>0&&<span style={{background:C.error,color:'#fff',borderRadius:10,padding:'2px 7px',fontSize:11,fontWeight:800}}>{n.badge}</span>}</div>))}
       </div>
       <div onClick={logout} style={{color:'#666',cursor:'pointer',padding:'10px 12px',fontWeight:600}}>↩ Sign out</div>
     </div>
   );
 }
 
+// ── OVERVIEW — fires alert on order:new ───────────────────────────────────────
 function Overview({setPage}) {
   const {restaurant}=useAuth();
   const [analytics,setAnalytics]=useState(null);
   const [liveOrders,setLiveOrders]=useState([]);
   const socketRef=useRef(null);
+
   useEffect(()=>{
     api.get('/restaurants/analytics').then(r=>setAnalytics(r.data)).catch(()=>{});
     api.get('/orders/restaurant').then(r=>setLiveOrders(r.data.filter(o=>['pending','confirmed','preparing'].includes(o.status)).slice(0,5))).catch(()=>{});
     if(!restaurant) return;
     const socket=io(SOCKET); socketRef.current=socket;
     socket.emit('restaurant:join',restaurant._id);
-    socket.on('order:new',order=>setLiveOrders(prev=>[order,...prev.slice(0,4)]));
+    socket.on('order:new', order => {
+      setLiveOrders(prev=>[order,...prev.slice(0,4)]);
+      // 🔔 FIRE ALL ALERTS
+      fireNewOrderAlert(order);
+    });
     socket.on('order:status',({orderId,status})=>setLiveOrders(prev=>prev.map(o=>o._id===orderId?{...o,status}:o).filter(o=>!['delivered','rejected','cancelled'].includes(o.status))));
     return()=>socket.disconnect();
   },[restaurant]);
-  const confirmOrder=async(orderId,prepTime)=>{ await api.patch(`/orders/${orderId}/status`,{status:'confirmed',prepTime}); setLiveOrders(prev=>prev.map(o=>o._id===orderId?{...o,status:'confirmed',prepTime}:o)); };
-  const rejectOrder=async(orderId)=>{ await api.patch(`/orders/${orderId}/status`,{status:'rejected'}); setLiveOrders(prev=>prev.filter(o=>o._id!==orderId)); };
+
+  const confirmOrder=async(orderId,prepTime)=>{ await api.patch(`/orders/${orderId}/status`,{status:'confirmed',prepTime}); setLiveOrders(prev=>prev.map(o=>o._id===orderId?{...o,status:'confirmed',prepTime}:o)); stopTabFlash(); };
+  const rejectOrder=async(orderId)=>{ await api.patch(`/orders/${orderId}/status`,{status:'rejected'}); setLiveOrders(prev=>prev.filter(o=>o._id!==orderId)); stopTabFlash(); };
   const markReady=async(orderId)=>{ await api.patch(`/orders/${orderId}/status`,{status:'ready_for_pickup'}); setLiveOrders(prev=>prev.filter(o=>o._id!==orderId)); };
   const now=new Date();
   const greeting=now.getHours()<12?'Good morning':now.getHours()<17?'Good afternoon':'Good evening';
   const pending=liveOrders.filter(o=>o.status==='pending').length;
+
   return (
     <div style={{padding:28,overflowY:'auto',flex:1}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:24}}>
         <div><h1 style={{fontSize:26,fontWeight:800}}>{greeting}, {restaurant?.name?.split(' ')[0]} 👋</h1><p style={{color:C.gray}}>{now.toLocaleDateString('en-US',{weekday:'long',day:'numeric',month:'long'})}</p></div>
-        {pending>0&&<div onClick={()=>setPage('orders')} style={{background:'#FEF3C7',border:'1px solid #F59E0B',padding:'8px 16px',borderRadius:20,cursor:'pointer',fontWeight:700,fontSize:13,color:'#92400E'}}>🔔 {pending} new order{pending>1?'s':''} need attention</div>}
+        {pending>0&&<div onClick={()=>{ setPage('orders'); stopTabFlash(); }} style={{background:'#FEF3C7',border:'1px solid #F59E0B',padding:'8px 16px',borderRadius:20,cursor:'pointer',fontWeight:700,fontSize:13,color:'#92400E',animation:'pulse 1s infinite'}}>🔔 {pending} new order{pending>1?'s':''} need attention</div>}
       </div>
       <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr',gap:14,marginBottom:14}}>
         <div style={{...card,background:C.primary,marginBottom:0}}><div style={{color:'rgba(255,255,255,0.7)',fontSize:11,fontWeight:700,letterSpacing:0.5}}>TODAY'S REVENUE</div><div style={{color:'#fff',fontSize:28,fontWeight:800,margin:'4px 0'}}>₦{(analytics?.todayRevenue||0).toLocaleString()}</div><div style={{color:'rgba(255,255,255,0.6)',fontSize:12}}>{analytics?.todayOrders||0} orders</div></div>
@@ -208,24 +289,32 @@ function Overview({setPage}) {
   );
 }
 
+// ── ORDERS — fires alert on order:new ─────────────────────────────────────────
 function Orders() {
   const {restaurant}=useAuth();
   const [orders,setOrders]=useState([]);
   const [tab,setTab]=useState('pending');
   const socketRef=useRef(null);
   const TABS={pending:['pending'],preparing:['confirmed','preparing'],'en route':['ready_for_pickup','accepted','picked_up'],done:['delivered','rejected','cancelled']};
+
   useEffect(()=>{
     api.get('/orders/restaurant').then(r=>setOrders(r.data)).catch(()=>{});
     if(!restaurant) return;
     const socket=io(SOCKET); socketRef.current=socket;
     socket.emit('restaurant:join',restaurant._id);
-    socket.on('order:new',o=>setOrders(prev=>[o,...prev]));
+    socket.on('order:new', o => {
+      setOrders(prev=>[o,...prev]);
+      // 🔔 FIRE ALL ALERTS (also fires from Orders page if tab is open)
+      fireNewOrderAlert(o);
+    });
     socket.on('order:status',({orderId,status})=>setOrders(prev=>prev.map(o=>o._id===orderId?{...o,status}:o)));
     return()=>socket.disconnect();
   },[restaurant]);
-  const update=async(id,status,extra={})=>{ await api.patch(`/orders/${id}/status`,{status,...extra}); setOrders(prev=>prev.map(o=>o._id===id?{...o,status,...extra}:o)); };
+
+  const update=async(id,status,extra={})=>{ await api.patch(`/orders/${id}/status`,{status,...extra}); setOrders(prev=>prev.map(o=>o._id===id?{...o,status,...extra}:o)); stopTabFlash(); };
   const filtered=orders.filter(o=>TABS[tab]?.includes(o.status));
   const SC={pending:C.warning,confirmed:'#3B82F6',preparing:'#8B5CF6',ready_for_pickup:'#06B6D4',delivered:C.success,rejected:C.error,cancelled:C.gray};
+
   return (
     <div style={{padding:28,overflowY:'auto',flex:1}}>
       <h1 style={{fontSize:26,fontWeight:800,marginBottom:20}}>Orders</h1>
@@ -247,7 +336,7 @@ function Orders() {
   );
 }
 
-// ── MENU ─────────────────────────────────────────────────────────────────────
+// ── MENU ──────────────────────────────────────────────────────────────────────
 function Menu() {
   const {restaurant}=useAuth();
   const [items,setItems]=useState([]);
@@ -257,96 +346,17 @@ function Menu() {
   const [uploading,setUploading]=useState(false);
   const fetch_=()=>{ if(restaurant) api.get(`/menu/${restaurant._id}`).then(r=>setItems(r.data)).catch(()=>{}); };
   useEffect(()=>{ fetch_(); },[restaurant]);
-
-  const handleImageUpload=async e=>{
-    const file=e.target.files[0]; if(!file) return;
-    setUploading(true);
-    try{ const url=await uploadToCloudinary(file); setForm(f=>({...f,image:url})); }
-    catch(err){ alert('Image upload failed: '+err.message); }
-    finally{ setUploading(false); }
-  };
-
-  const add=async()=>{
-    if(!form.name||!form.price) return;
-    await api.post('/menu',{...form,price:Number(form.price)});
-    setForm({name:'',price:'',category:'Mains',description:'',image:''});
-    setShowForm(false); fetch_();
-  };
-
+  const handleImageUpload=async e=>{ const file=e.target.files[0]; if(!file) return; setUploading(true); try{ const url=await uploadToCloudinary(file); setForm(f=>({...f,image:url})); }catch(err){ alert('Image upload failed: '+err.message); }finally{ setUploading(false); } };
+  const add=async()=>{ if(!form.name||!form.price) return; await api.post('/menu',{...form,price:Number(form.price)}); setForm({name:'',price:'',category:'Mains',description:'',image:''}); setShowForm(false); fetch_(); };
   const toggle=async item=>{ await api.patch(`/menu/${item._id}`,{isAvailable:!item.isAvailable}); fetch_(); };
   const del=async id=>{ if(window.confirm('Delete this item?')){ await api.delete(`/menu/${id}`); fetch_(); } };
   const filtered=cat==='All'?items:items.filter(i=>i.category===cat);
-
   return (
     <div style={{padding:28,overflowY:'auto',flex:1}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
-        <div><h1 style={{fontSize:26,fontWeight:800}}>Menu</h1><p style={{color:C.gray}}>{items.length} items</p></div>
-        <button style={btn(C.primary)} onClick={()=>setShowForm(!showForm)}>+ Add Item</button>
-      </div>
-
-      {showForm&&(
-        <div style={{...card,marginBottom:20,borderTop:`3px solid ${C.primary}`}}>
-          <h3 style={{fontWeight:800,marginBottom:14}}>New Menu Item</h3>
-          <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:12,marginBottom:12}}>
-            <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Item Name *</label><input style={inp} placeholder="e.g. Jollof Rice" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} /></div>
-            <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Price (₦) *</label><input style={inp} type="number" placeholder="2500" value={form.price} onChange={e=>setForm({...form,price:e.target.value})} /></div>
-          </div>
-          <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
-            {['Mains','Sides','Drinks','Desserts'].map(c=><button key={c} onClick={()=>setForm({...form,category:c})} style={{...btn(form.category===c?C.primary:'#f5f5f5'),color:form.category===c?'#fff':C.gray,borderRadius:20}}>{c}</button>)}
-          </div>
-          <div style={{marginBottom:12}}><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Description</label><textarea style={{...inp,height:70,resize:'vertical'}} placeholder="Describe this item..." value={form.description} onChange={e=>setForm({...form,description:e.target.value})} /></div>
-
-          {/* Food image upload */}
-          <div style={{marginBottom:16}}>
-            <label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:8}}>📸 Food Photo</label>
-            <div style={{display:'flex',alignItems:'center',gap:14}}>
-              {form.image ? (
-                <div style={{position:'relative'}}>
-                  <img src={form.image} alt="" style={{width:80,height:80,borderRadius:12,objectFit:'cover',border:`2px solid ${C.success}`}} />
-                  <button onClick={()=>setForm({...form,image:''})} style={{position:'absolute',top:-8,right:-8,width:22,height:22,borderRadius:'50%',background:C.error,color:'#fff',border:'none',cursor:'pointer',fontSize:12,display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
-                </div>
-              ) : (
-                <div style={{width:80,height:80,borderRadius:12,background:'#f5f5f5',border:`2px dashed ${C.border}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:28}}>🍽️</div>
-              )}
-              <div>
-                <label style={{...btn(C.primary),display:'inline-block',cursor:'pointer',padding:'8px 16px'}}>
-                  {uploading ? '⏳ Uploading...' : '📷 Upload Photo'}
-                  <input type="file" accept="image/*" onChange={handleImageUpload} style={{display:'none'}} disabled={uploading} />
-                </label>
-                <p style={{color:C.gray,fontSize:12,marginTop:6}}>JPG, PNG up to 5MB. Shown to customers on the menu.</p>
-              </div>
-            </div>
-          </div>
-
-          <div style={{display:'flex',gap:8}}>
-            <button style={{...btn('#f5f5f5'),color:C.gray}} onClick={()=>setShowForm(false)}>Cancel</button>
-            <button style={btn(C.primary)} onClick={add} disabled={uploading}>{uploading?'Uploading image...':'Add to Menu'}</button>
-          </div>
-        </div>
-      )}
-
-      <div style={{display:'flex',gap:8,marginBottom:20,flexWrap:'wrap'}}>
-        {['All','Mains','Sides','Drinks','Desserts'].map(c=><button key={c} onClick={()=>setCat(c)} style={{...btn(cat===c?C.dark:'#fff'),color:cat===c?'#fff':C.gray,border:`1px solid ${C.border}`,borderRadius:20}}>{c}</button>)}
-      </div>
-
-      {filtered.map(item=>(
-        <div key={item._id} style={{...card,display:'flex',alignItems:'center',gap:14}}>
-          {/* Food image or fallback */}
-          <div style={{width:72,height:72,borderRadius:12,overflow:'hidden',flexShrink:0,background:'#f5f5f5',display:'flex',alignItems:'center',justifyContent:'center',fontSize:28}}>
-            {item.image ? <img src={item.image} alt={item.name} style={{width:72,height:72,objectFit:'cover'}} /> : '🍽️'}
-          </div>
-          <div style={{flex:1}}>
-            <div style={{fontWeight:700,fontSize:15}}>{item.name}</div>
-            <div style={{color:C.gray,fontSize:12}}>{item.category}{item.description?` · ${item.description}`:''}</div>
-            <div style={{color:C.primary,fontWeight:800,fontSize:15,marginTop:2}}>₦{item.price?.toLocaleString()}</div>
-          </div>
-          <div style={{display:'flex',alignItems:'center',gap:12}}>
-            <span style={{color:item.isAvailable?C.success:C.error,fontWeight:600,fontSize:13}}>{item.isAvailable?'✓ Available':'✗ Off'}</span>
-            <input type="checkbox" checked={item.isAvailable} onChange={()=>toggle(item)} style={{width:18,height:18,cursor:'pointer'}} />
-            <button onClick={()=>del(item._id)} style={{...btn(C.error),padding:'5px 10px',fontSize:12}}>🗑️</button>
-          </div>
-        </div>
-      ))}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}><div><h1 style={{fontSize:26,fontWeight:800}}>Menu</h1><p style={{color:C.gray}}>{items.length} items</p></div><button style={btn(C.primary)} onClick={()=>setShowForm(!showForm)}>+ Add Item</button></div>
+      {showForm&&(<div style={{...card,marginBottom:20,borderTop:`3px solid ${C.primary}`}}><h3 style={{fontWeight:800,marginBottom:14}}>New Menu Item</h3><div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:12,marginBottom:12}}><div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Item Name *</label><input style={inp} placeholder="e.g. Jollof Rice" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} /></div><div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Price (₦) *</label><input style={inp} type="number" placeholder="2500" value={form.price} onChange={e=>setForm({...form,price:e.target.value})} /></div></div><div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>{['Mains','Sides','Drinks','Desserts'].map(c=><button key={c} onClick={()=>setForm({...form,category:c})} style={{...btn(form.category===c?C.primary:'#f5f5f5'),color:form.category===c?'#fff':C.gray,borderRadius:20}}>{c}</button>)}</div><div style={{marginBottom:12}}><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Description</label><textarea style={{...inp,height:70,resize:'vertical'}} placeholder="Describe this item..." value={form.description} onChange={e=>setForm({...form,description:e.target.value})} /></div><div style={{marginBottom:16}}><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:8}}>📸 Food Photo</label><div style={{display:'flex',alignItems:'center',gap:14}}>{form.image?(<div style={{position:'relative'}}><img src={form.image} alt="" style={{width:80,height:80,borderRadius:12,objectFit:'cover',border:`2px solid ${C.success}`}} /><button onClick={()=>setForm({...form,image:''})} style={{position:'absolute',top:-8,right:-8,width:22,height:22,borderRadius:'50%',background:C.error,color:'#fff',border:'none',cursor:'pointer',fontSize:12,display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button></div>):(<div style={{width:80,height:80,borderRadius:12,background:'#f5f5f5',border:`2px dashed ${C.border}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:28}}>🍽️</div>)}<div><label style={{...btn(C.primary),display:'inline-block',cursor:'pointer',padding:'8px 16px'}}>{uploading?'⏳ Uploading...':'📷 Upload Photo'}<input type="file" accept="image/*" onChange={handleImageUpload} style={{display:'none'}} disabled={uploading} /></label><p style={{color:C.gray,fontSize:12,marginTop:6}}>JPG, PNG up to 5MB.</p></div></div></div><div style={{display:'flex',gap:8}}><button style={{...btn('#f5f5f5'),color:C.gray}} onClick={()=>setShowForm(false)}>Cancel</button><button style={btn(C.primary)} onClick={add} disabled={uploading}>{uploading?'Uploading image...':'Add to Menu'}</button></div></div>)}
+      <div style={{display:'flex',gap:8,marginBottom:20,flexWrap:'wrap'}}>{['All','Mains','Sides','Drinks','Desserts'].map(c=><button key={c} onClick={()=>setCat(c)} style={{...btn(cat===c?C.dark:'#fff'),color:cat===c?'#fff':C.gray,border:`1px solid ${C.border}`,borderRadius:20}}>{c}</button>)}</div>
+      {filtered.map(item=>(<div key={item._id} style={{...card,display:'flex',alignItems:'center',gap:14}}><div style={{width:72,height:72,borderRadius:12,overflow:'hidden',flexShrink:0,background:'#f5f5f5',display:'flex',alignItems:'center',justifyContent:'center',fontSize:28}}>{item.image?<img src={item.image} alt={item.name} style={{width:72,height:72,objectFit:'cover'}} />:'🍽️'}</div><div style={{flex:1}}><div style={{fontWeight:700,fontSize:15}}>{item.name}</div><div style={{color:C.gray,fontSize:12}}>{item.category}{item.description?` · ${item.description}`:''}</div><div style={{color:C.primary,fontWeight:800,fontSize:15,marginTop:2}}>₦{item.price?.toLocaleString()}</div></div><div style={{display:'flex',alignItems:'center',gap:12}}><span style={{color:item.isAvailable?C.success:C.error,fontWeight:600,fontSize:13}}>{item.isAvailable?'✓ Available':'✗ Off'}</span><input type="checkbox" checked={item.isAvailable} onChange={()=>toggle(item)} style={{width:18,height:18,cursor:'pointer'}} /><button onClick={()=>del(item._id)} style={{...btn(C.error),padding:'5px 10px',fontSize:12}}>🗑️</button></div></div>))}
     </div>
   );
 }
@@ -354,42 +364,17 @@ function Menu() {
 function Analytics() {
   const [data,setData]=useState(null);
   useEffect(()=>{ api.get('/restaurants/analytics').then(r=>setData(r.data)).catch(()=>{}); },[]);
-const top = data?.topItems || [];
-const maxCount = top.length > 0 ? top[0].count : 1;  const grossRevenue=(data?.allTimeRevenue||0)/0.90;
+  const top=data?.topItems||[];
+  const maxCount=top.length>0?top[0].count:1;
+  const grossRevenue=(data?.allTimeRevenue||0)/0.90;
   const platformCut=grossRevenue-(data?.allTimeRevenue||0);
   return (
     <div style={{padding:28,overflowY:'auto',flex:1}}>
       <h1 style={{fontSize:26,fontWeight:800,marginBottom:20}}>Analytics</h1>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
-        {[['TODAY',data?.todayRevenue,data?.todayOrders+' orders'],['THIS WEEK',data?.weekRevenue,data?.weekOrders+' orders'],['THIS MONTH',data?.monthRevenue,data?.monthOrders+' orders'],['ALL TIME',data?.allTimeRevenue,(data?.allTimeOrders||0)+' orders']].map(([l,v,s])=>(<div key={l} style={card}><div style={{color:C.gray,fontSize:10,fontWeight:700,letterSpacing:0.5}}>{l}</div><div style={{fontWeight:800,fontSize:22,margin:'4px 0'}}>₦{(v||0).toLocaleString()}</div><div style={{color:C.gray,fontSize:12}}>{s}</div></div>))}
-      </div>
-      <div style={{...card,borderTop:`3px solid ${C.error}`,marginBottom:20}}>
-        <h3 style={{fontWeight:800,marginBottom:4}}>📊 Earnings Breakdown</h3>
-        <p style={{color:C.gray,fontSize:13,marginBottom:16}}>DoorBite deducts 10% from every order as a platform fee</p>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14}}>
-          <div style={{background:'#F0FDF4',borderRadius:12,padding:16,borderLeft:`3px solid ${C.success}`}}><div style={{fontSize:11,fontWeight:700,color:C.gray,letterSpacing:0.5}}>GROSS REVENUE</div><div style={{fontSize:22,fontWeight:800,color:C.success,margin:'4px 0'}}>₦{Math.round(grossRevenue).toLocaleString()}</div><div style={{fontSize:12,color:C.gray}}>Customer payments</div></div>
-          <div style={{background:'#FEF2F2',borderRadius:12,padding:16,borderLeft:`3px solid ${C.error}`}}><div style={{fontSize:11,fontWeight:700,color:C.gray,letterSpacing:0.5}}>DOORBITE CUT (10%)</div><div style={{fontSize:22,fontWeight:800,color:C.error,margin:'4px 0'}}>₦{Math.round(platformCut).toLocaleString()}</div><div style={{fontSize:12,color:C.gray}}>Platform service fee</div></div>
-          <div style={{background:'#EFF6FF',borderRadius:12,padding:16,borderLeft:`3px solid #3B82F6`}}><div style={{fontSize:11,fontWeight:700,color:C.gray,letterSpacing:0.5}}>YOUR NET EARNINGS</div><div style={{fontSize:22,fontWeight:800,color:'#3B82F6',margin:'4px 0'}}>₦{(data?.allTimeRevenue||0).toLocaleString()}</div><div style={{fontSize:12,color:C.gray}}>90% of food orders</div></div>
-        </div>
-      </div>
-      <div style={card}>
-        <h3 style={{fontWeight:800,marginBottom:16}}>🏆 Top Menu Items</h3>
-{top.length === 0 ? (
-  <p style={{color:C.gray,textAlign:'center',padding:20}}>No orders yet — top items will appear here</p>
-) : top.map((item, i) => (
-  <div key={item.name} style={{display:'flex',alignItems:'center',gap:12,marginBottom:14}}>
-    <span style={{width:20,color:C.gray,fontWeight:800}}>{i+1}</span>
-    <span style={{flex:1,fontWeight:600}}>{item.name}</span>
-    <div style={{width:120,height:8,background:'#f5f5f5',borderRadius:4}}>
-      <div style={{width:`${(item.count/maxCount)*100}%`,height:'100%',background:C.primary,borderRadius:4}} />
-    </div>
-    <span style={{color:C.gray,fontWeight:700,width:40,textAlign:'right'}}>{item.count}×</span>
-  </div>
-))}      </div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
-        <div style={card}><div style={{color:C.gray,fontSize:11,fontWeight:700}}>AVG ORDER VALUE</div><div style={{fontSize:28,fontWeight:800,margin:'4px 0'}}>₦{data?.allTimeOrders>0?Math.floor((data?.allTimeRevenue||0)/(data?.allTimeOrders||1)).toLocaleString():0}</div><div style={{color:C.gray,fontSize:12}}>per order (your 90%)</div></div>
-        <div style={card}><div style={{color:C.gray,fontSize:11,fontWeight:700}}>TOTAL ORDERS</div><div style={{fontSize:28,fontWeight:800,margin:'4px 0'}}>{data?.allTimeOrders||0}</div><div style={{color:C.gray,fontSize:12}}>all time delivered</div></div>
-      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>{[['TODAY',data?.todayRevenue,data?.todayOrders+' orders'],['THIS WEEK',data?.weekRevenue,data?.weekOrders+' orders'],['THIS MONTH',data?.monthRevenue,data?.monthOrders+' orders'],['ALL TIME',data?.allTimeRevenue,(data?.allTimeOrders||0)+' orders']].map(([l,v,s])=>(<div key={l} style={card}><div style={{color:C.gray,fontSize:10,fontWeight:700,letterSpacing:0.5}}>{l}</div><div style={{fontWeight:800,fontSize:22,margin:'4px 0'}}>₦{(v||0).toLocaleString()}</div><div style={{color:C.gray,fontSize:12}}>{s}</div></div>))}</div>
+      <div style={{...card,borderTop:`3px solid ${C.error}`,marginBottom:20}}><h3 style={{fontWeight:800,marginBottom:4}}>📊 Earnings Breakdown</h3><p style={{color:C.gray,fontSize:13,marginBottom:16}}>DoorBite deducts 10% from every order as a platform fee</p><div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14}}><div style={{background:'#F0FDF4',borderRadius:12,padding:16,borderLeft:`3px solid ${C.success}`}}><div style={{fontSize:11,fontWeight:700,color:C.gray,letterSpacing:0.5}}>GROSS REVENUE</div><div style={{fontSize:22,fontWeight:800,color:C.success,margin:'4px 0'}}>₦{Math.round(grossRevenue).toLocaleString()}</div></div><div style={{background:'#FEF2F2',borderRadius:12,padding:16,borderLeft:`3px solid ${C.error}`}}><div style={{fontSize:11,fontWeight:700,color:C.gray,letterSpacing:0.5}}>DOORBITE CUT (10%)</div><div style={{fontSize:22,fontWeight:800,color:C.error,margin:'4px 0'}}>₦{Math.round(platformCut).toLocaleString()}</div></div><div style={{background:'#EFF6FF',borderRadius:12,padding:16,borderLeft:`3px solid #3B82F6`}}><div style={{fontSize:11,fontWeight:700,color:C.gray,letterSpacing:0.5}}>YOUR NET EARNINGS</div><div style={{fontSize:22,fontWeight:800,color:'#3B82F6',margin:'4px 0'}}>₦{(data?.allTimeRevenue||0).toLocaleString()}</div></div></div></div>
+      <div style={card}><h3 style={{fontWeight:800,marginBottom:16}}>🏆 Top Menu Items</h3>{top.length===0?(<p style={{color:C.gray,textAlign:'center',padding:20}}>No orders yet</p>):top.map((item,i)=>(<div key={item.name} style={{display:'flex',alignItems:'center',gap:12,marginBottom:14}}><span style={{width:20,color:C.gray,fontWeight:800}}>{i+1}</span><span style={{flex:1,fontWeight:600}}>{item.name}</span><div style={{width:120,height:8,background:'#f5f5f5',borderRadius:4}}><div style={{width:`${(item.count/maxCount)*100}%`,height:'100%',background:C.primary,borderRadius:4}} /></div><span style={{color:C.gray,fontWeight:700,width:40,textAlign:'right'}}>{item.count}×</span></div>))}</div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}><div style={card}><div style={{color:C.gray,fontSize:11,fontWeight:700}}>AVG ORDER VALUE</div><div style={{fontSize:28,fontWeight:800,margin:'4px 0'}}>₦{data?.allTimeOrders>0?Math.floor((data?.allTimeRevenue||0)/(data?.allTimeOrders||1)).toLocaleString():0}</div></div><div style={card}><div style={{color:C.gray,fontSize:11,fontWeight:700}}>TOTAL ORDERS</div><div style={{fontSize:28,fontWeight:800,margin:'4px 0'}}>{data?.allTimeOrders||0}</div></div></div>
     </div>
   );
 }
@@ -406,119 +391,29 @@ function Wallet() {
     <div style={{padding:28,overflowY:'auto',flex:1}}>
       <h1 style={{fontSize:26,fontWeight:800,marginBottom:4}}>💰 Wallet & Withdrawals</h1>
       <p style={{color:C.gray,marginBottom:24}}>Manage your earnings and request payouts to your bank account</p>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,marginBottom:24}}>
-        <div style={{...card,background:C.success,marginBottom:0,color:'#fff'}}><div style={{color:'rgba(255,255,255,0.8)',fontSize:11,fontWeight:700,letterSpacing:0.5,marginBottom:4}}>AVAILABLE BALANCE</div><div style={{fontSize:32,fontWeight:800,margin:'6px 0'}}>₦{(data?.walletBalance||0).toLocaleString()}</div><div style={{color:'rgba(255,255,255,0.7)',fontSize:12}}>Ready to withdraw</div></div>
-        <div style={{...card,marginBottom:0}}><div style={{color:C.gray,fontSize:11,fontWeight:700,letterSpacing:0.5,marginBottom:4}}>ALL TIME EARNED</div><div style={{fontSize:28,fontWeight:800,margin:'6px 0'}}>₦{(data?.allTimeRevenue||0).toLocaleString()}</div><div style={{color:C.gray,fontSize:12}}>Your 90% net share</div></div>
-        <div style={{...card,marginBottom:0}}><div style={{color:C.gray,fontSize:11,fontWeight:700,letterSpacing:0.5,marginBottom:4}}>TOTAL ORDERS</div><div style={{fontSize:28,fontWeight:800,margin:'6px 0'}}>{data?.allTimeOrders||0}</div><div style={{color:C.gray,fontSize:12}}>Delivered all time</div></div>
-      </div>
-      <div style={{...card,borderTop:`4px solid ${C.success}`,marginBottom:24}}>
-        <h2 style={{fontSize:20,fontWeight:800,marginBottom:4}}>Request Withdrawal</h2>
-        <p style={{color:C.gray,fontSize:13,marginBottom:20}}>Processed via Paystack directly to your bank account. {!restaurant?.bankDetails?.accountNumber?<span style={{color:C.error,fontWeight:600}}> ⚠️ Add your bank details in Settings first.</span>:<span style={{color:C.success,fontWeight:600}}> ✓ Bank account on file.</span>}</p>
-        {restaurant?.bankDetails?.accountNumber&&(<div style={{background:'#F0FDF4',borderRadius:12,padding:14,marginBottom:20,display:'flex',alignItems:'center',gap:12,border:`1px solid #BBF7D0`}}><span style={{fontSize:28}}>🏦</span><div><div style={{fontWeight:700,fontSize:15}}>{restaurant.bankDetails.bankName}</div><div style={{color:C.gray,fontSize:13}}>{restaurant.bankDetails.accountNumber} · {restaurant.bankDetails.accountName}</div></div><span style={{marginLeft:'auto',background:'#DCFCE7',color:C.success,padding:'4px 12px',borderRadius:20,fontWeight:700,fontSize:12}}>✓ Active</span></div>)}
-        <label style={{fontSize:13,fontWeight:700,display:'block',marginBottom:8}}>Amount to Withdraw (₦)</label>
-        <div style={{display:'flex',gap:10,marginBottom:12,flexWrap:'wrap'}}>{[5000,10000,20000,50000].map(amt=><button key={amt} onClick={()=>setWAmount(String(amt))} style={{...btn(Number(wAmount)===amt?C.success:'#f0f0f0',Number(wAmount)===amt?'#fff':C.gray),borderRadius:20,padding:'8px 18px',fontSize:13}}>₦{(amt/1000).toFixed(0)}k</button>)}</div>
-        <input style={{...inp,fontSize:18,fontWeight:700,height:52,marginBottom:8}} type="number" placeholder="Or enter custom amount" value={wAmount} onChange={e=>setWAmount(e.target.value)} />
-        {wAmount&&Number(wAmount)>0&&<div style={{marginBottom:12,fontSize:13,color:C.gray}}>You will receive: <strong style={{color:C.success,fontSize:15}}>₦{Number(wAmount).toLocaleString()}</strong></div>}
-        <button style={{...btn(C.success),padding:'14px 36px',fontSize:16,opacity:(!wAmount||Number(wAmount)<100||wLoading)?0.5:1}} onClick={requestWithdrawal} disabled={!wAmount||Number(wAmount)<100||wLoading}>{wLoading?'⏳ Submitting...':'↗ Request Withdrawal'}</button>
-      </div>
-      <div style={card}>
-        <h2 style={{fontSize:18,fontWeight:800,marginBottom:16}}>Withdrawal History</h2>
-        {loading?<p style={{color:C.gray,textAlign:'center',padding:20}}>Loading...</p>:withdrawals.length===0?(<div style={{textAlign:'center',padding:48}}><div style={{fontSize:52,marginBottom:12}}>💸</div><p style={{color:C.gray,fontSize:15,fontWeight:600}}>No withdrawals yet</p></div>):withdrawals.map(w=>(
-          <div key={w._id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'16px 0',borderBottom:`1px solid ${C.border}`}}>
-            <div style={{display:'flex',alignItems:'center',gap:14}}><div style={{width:48,height:48,borderRadius:12,background:(SC[w.status]||C.gray)+'22',display:'flex',alignItems:'center',justifyContent:'center',fontSize:22}}>{statusIcon[w.status]||'🕐'}</div><div><div style={{fontWeight:800,fontSize:17}}>₦{w.amount?.toLocaleString()}</div><div style={{color:C.gray,fontSize:12,marginTop:2}}>{new Date(w.createdAt).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})} · {w.bankDetails?.bankName} · ****{w.bankDetails?.accountNumber?.slice(-4)}</div>{w.adminNote&&<div style={{color:C.warning,fontSize:12,marginTop:3}}>📝 {w.adminNote}</div>}</div></div>
-            <div style={{textAlign:'right'}}><span style={{background:(SC[w.status]||C.gray)+'22',color:SC[w.status]||C.gray,padding:'5px 14px',borderRadius:20,fontSize:13,fontWeight:700,textTransform:'capitalize',display:'inline-block',marginBottom:4}}>{w.status}</span>{w.status==='paid'&&<div style={{color:C.success,fontSize:11,fontWeight:600}}>✓ Paid to your bank</div>}</div>
-          </div>
-        ))}
-      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,marginBottom:24}}><div style={{...card,background:C.success,marginBottom:0,color:'#fff'}}><div style={{color:'rgba(255,255,255,0.8)',fontSize:11,fontWeight:700,letterSpacing:0.5,marginBottom:4}}>AVAILABLE BALANCE</div><div style={{fontSize:32,fontWeight:800,margin:'6px 0'}}>₦{(data?.walletBalance||0).toLocaleString()}</div></div><div style={{...card,marginBottom:0}}><div style={{color:C.gray,fontSize:11,fontWeight:700,letterSpacing:0.5,marginBottom:4}}>ALL TIME EARNED</div><div style={{fontSize:28,fontWeight:800,margin:'6px 0'}}>₦{(data?.allTimeRevenue||0).toLocaleString()}</div></div><div style={{...card,marginBottom:0}}><div style={{color:C.gray,fontSize:11,fontWeight:700,letterSpacing:0.5,marginBottom:4}}>TOTAL ORDERS</div><div style={{fontSize:28,fontWeight:800,margin:'6px 0'}}>{data?.allTimeOrders||0}</div></div></div>
+      <div style={{...card,borderTop:`4px solid ${C.success}`,marginBottom:24}}><h2 style={{fontSize:20,fontWeight:800,marginBottom:4}}>Request Withdrawal</h2><p style={{color:C.gray,fontSize:13,marginBottom:20}}>Processed via Paystack directly to your bank account. {!restaurant?.bankDetails?.accountNumber?<span style={{color:C.error,fontWeight:600}}> ⚠️ Add your bank details in Settings first.</span>:<span style={{color:C.success,fontWeight:600}}> ✓ Bank account on file.</span>}</p>{restaurant?.bankDetails?.accountNumber&&(<div style={{background:'#F0FDF4',borderRadius:12,padding:14,marginBottom:20,display:'flex',alignItems:'center',gap:12,border:`1px solid #BBF7D0`}}><span style={{fontSize:28}}>🏦</span><div><div style={{fontWeight:700,fontSize:15}}>{restaurant.bankDetails.bankName}</div><div style={{color:C.gray,fontSize:13}}>{restaurant.bankDetails.accountNumber} · {restaurant.bankDetails.accountName}</div></div><span style={{marginLeft:'auto',background:'#DCFCE7',color:C.success,padding:'4px 12px',borderRadius:20,fontWeight:700,fontSize:12}}>✓ Active</span></div>)}<label style={{fontSize:13,fontWeight:700,display:'block',marginBottom:8}}>Amount to Withdraw (₦)</label><div style={{display:'flex',gap:10,marginBottom:12,flexWrap:'wrap'}}>{[5000,10000,20000,50000].map(amt=><button key={amt} onClick={()=>setWAmount(String(amt))} style={{...btn(Number(wAmount)===amt?C.success:'#f0f0f0',Number(wAmount)===amt?'#fff':C.gray),borderRadius:20,padding:'8px 18px',fontSize:13}}>₦{(amt/1000).toFixed(0)}k</button>)}</div><input style={{...inp,fontSize:18,fontWeight:700,height:52,marginBottom:8}} type="number" placeholder="Or enter custom amount" value={wAmount} onChange={e=>setWAmount(e.target.value)} />{wAmount&&Number(wAmount)>0&&<div style={{marginBottom:12,fontSize:13,color:C.gray}}>You will receive: <strong style={{color:C.success,fontSize:15}}>₦{Number(wAmount).toLocaleString()}</strong></div>}<button style={{...btn(C.success),padding:'14px 36px',fontSize:16,opacity:(!wAmount||Number(wAmount)<100||wLoading)?0.5:1}} onClick={requestWithdrawal} disabled={!wAmount||Number(wAmount)<100||wLoading}>{wLoading?'⏳ Submitting...':'↗ Request Withdrawal'}</button></div>
+      <div style={card}><h2 style={{fontSize:18,fontWeight:800,marginBottom:16}}>Withdrawal History</h2>{loading?<p style={{color:C.gray,textAlign:'center',padding:20}}>Loading...</p>:withdrawals.length===0?(<div style={{textAlign:'center',padding:48}}><div style={{fontSize:52,marginBottom:12}}>💸</div><p style={{color:C.gray,fontSize:15,fontWeight:600}}>No withdrawals yet</p></div>):withdrawals.map(w=>(<div key={w._id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'16px 0',borderBottom:`1px solid ${C.border}`}}><div style={{display:'flex',alignItems:'center',gap:14}}><div style={{width:48,height:48,borderRadius:12,background:(SC[w.status]||C.gray)+'22',display:'flex',alignItems:'center',justifyContent:'center',fontSize:22}}>{statusIcon[w.status]||'🕐'}</div><div><div style={{fontWeight:800,fontSize:17}}>₦{w.amount?.toLocaleString()}</div><div style={{color:C.gray,fontSize:12,marginTop:2}}>{new Date(w.createdAt).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})} · {w.bankDetails?.bankName} · ****{w.bankDetails?.accountNumber?.slice(-4)}</div>{w.adminNote&&<div style={{color:C.warning,fontSize:12,marginTop:3}}>📝 {w.adminNote}</div>}</div></div><div style={{textAlign:'right'}}><span style={{background:(SC[w.status]||C.gray)+'22',color:SC[w.status]||C.gray,padding:'5px 14px',borderRadius:20,fontSize:13,fontWeight:700,textTransform:'capitalize',display:'inline-block',marginBottom:4}}>{w.status}</span>{w.status==='paid'&&<div style={{color:C.success,fontSize:11,fontWeight:600}}>✓ Paid to your bank</div>}</div></div>))}</div>
     </div>
   );
 }
 
-// ── SETTINGS ──────────────────────────────────────────────────────────────────
 function Settings() {
   const {restaurant,setRestaurant}=useAuth();
   const [form,setForm]=useState({name:'',phone:'',address:'',cuisineType:'',description:'',isOpen:false,openTime:'08:00',closeTime:'22:00',logo:''});
   const [bankForm,setBankForm]=useState({bankName:'',accountNumber:'',accountName:'',bankCode:''});
   const [saving,setSaving]=useState(false); const [savingBank,setSavingBank]=useState(false); const [uploadingLogo,setUploadingLogo]=useState(false);
-
   useEffect(()=>{ if(restaurant){ setForm({name:restaurant.name||'',phone:restaurant.phone||'',address:restaurant.address||'',cuisineType:restaurant.cuisineType||'',description:restaurant.description||'',isOpen:restaurant.isOpen||false,openTime:restaurant.openTime||'08:00',closeTime:restaurant.closeTime||'22:00',logo:restaurant.logo||''}); if(restaurant.bankDetails) setBankForm(restaurant.bankDetails); } },[restaurant]);
-
-  const handleLogoUpload=async e=>{
-    const file=e.target.files[0]; if(!file) return;
-    setUploadingLogo(true);
-    try{
-      const url=await uploadToCloudinary(file);
-      setForm(f=>({...f,logo:url}));
-      // Save immediately
-      const {data}=await api.patch('/restaurants/me',{logo:url});
-      setRestaurant(data);
-      alert('✅ Restaurant photo updated!');
-    }catch(err){ alert('Upload failed: '+err.message); }
-    finally{ setUploadingLogo(false); }
-  };
-
+  const handleLogoUpload=async e=>{ const file=e.target.files[0]; if(!file) return; setUploadingLogo(true); try{ const url=await uploadToCloudinary(file); setForm(f=>({...f,logo:url})); const {data}=await api.patch('/restaurants/me',{logo:url}); setRestaurant(data); alert('✅ Restaurant photo updated!'); }catch(err){ alert('Upload failed: '+err.message); }finally{ setUploadingLogo(false); } };
   const save=async()=>{ setSaving(true); try{ const {data}=await api.patch('/restaurants/me',form); setRestaurant(data); alert('Settings saved!'); }catch{ alert('Failed to save'); }finally{ setSaving(false); } };
   const saveBank=async()=>{ if(!bankForm.accountNumber||!bankForm.bankName||!bankForm.accountName) return alert('Please fill in all bank details'); setSavingBank(true); try{ const {data}=await api.patch('/restaurants/me',{bankDetails:bankForm}); setRestaurant(data); alert('✅ Bank details saved!'); }catch{ alert('Failed to save bank details'); }finally{ setSavingBank(false); } };
-
   return (
     <div style={{padding:28,overflowY:'auto',flex:1}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
-        <h1 style={{fontSize:26,fontWeight:800}}>Settings</h1>
-        <button style={btn(C.primary)} onClick={save} disabled={saving}>{saving?'Saving...':'💾 Save Changes'}</button>
-      </div>
-
-      {/* Restaurant Photo */}
-      <div style={{...card,marginBottom:16}}>
-        <h3 style={{fontWeight:800,marginBottom:14}}>📸 Restaurant Photo</h3>
-        <p style={{color:C.gray,fontSize:13,marginBottom:16}}>This photo appears on the customer app home screen and restaurant page.</p>
-        <div style={{display:'flex',alignItems:'center',gap:20}}>
-          <div style={{width:120,height:90,borderRadius:14,overflow:'hidden',background:'#f5f5f5',border:`2px dashed ${C.border}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:36,flexShrink:0}}>
-            {form.logo ? <img src={form.logo} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : '🏪'}
-          </div>
-          <div>
-            <label style={{...btn(C.primary),display:'inline-block',cursor:'pointer',padding:'10px 20px',fontSize:14}}>
-              {uploadingLogo ? '⏳ Uploading...' : '📷 Upload Photo'}
-              <input type="file" accept="image/*" onChange={handleLogoUpload} style={{display:'none'}} disabled={uploadingLogo} />
-            </label>
-            <p style={{color:C.gray,fontSize:12,marginTop:8}}>JPG or PNG, at least 400×300px. Shows to customers on the app.</p>
-            {form.logo && <p style={{color:C.success,fontSize:12,marginTop:4,fontWeight:600}}>✓ Photo uploaded successfully</p>}
-          </div>
-        </div>
-      </div>
-
-      {/* Status */}
-      <div style={{...card,marginBottom:16}}>
-        <h3 style={{fontWeight:800,marginBottom:14}}>🟢 Restaurant Status</h3>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}><span style={{fontWeight:600}}>Currently {form.isOpen?'Open':'Closed'}</span><input type="checkbox" checked={form.isOpen} onChange={e=>setForm({...form,isOpen:e.target.checked})} style={{width:22,height:22,cursor:'pointer',accentColor:C.primary}} /></div>
-        <p style={{color:C.gray,fontSize:13,marginBottom:14}}>{form.isOpen?'Accepting orders from customers':'Not accepting orders'}</p>
-        <div style={{display:'grid',gridTemplateColumns:'1fr auto 1fr',gap:12,alignItems:'end'}}>
-          <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Opens</label><input style={inp} value={form.openTime} onChange={e=>setForm({...form,openTime:e.target.value})} /></div>
-          <span style={{paddingBottom:10,color:C.gray,fontWeight:700}}>→</span>
-          <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Closes</label><input style={inp} value={form.closeTime} onChange={e=>setForm({...form,closeTime:e.target.value})} /></div>
-        </div>
-      </div>
-
-      {/* Restaurant details */}
-      <div style={{...card,marginBottom:16}}>
-        <h3 style={{fontWeight:800,marginBottom:14}}>🏪 Restaurant Details</h3>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
-          {[['Restaurant Name','name'],['Phone','phone'],['Address','address'],['Cuisine Type','cuisineType']].map(([l,k])=>(<div key={k}><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>{l}</label><input style={inp} value={form[k]} onChange={e=>setForm({...form,[k]:e.target.value})} /></div>))}
-        </div>
-        <div style={{marginTop:14}}><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Description</label><textarea style={{...inp,height:90,resize:'vertical'}} value={form.description} onChange={e=>setForm({...form,description:e.target.value})} /></div>
-      </div>
-
-      {/* Bank details */}
-      <div style={{...card,borderTop:`3px solid ${C.success}`}}>
-        <h3 style={{fontWeight:800,marginBottom:4}}>🏦 Bank Details for Withdrawals</h3>
-        <p style={{color:C.gray,fontSize:13,marginBottom:16}}>Required to receive withdrawal payments via Paystack</p>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14}}>
-          <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Bank Name</label><select style={{...inp,cursor:'pointer',background:'#fff',height:44}} value={bankForm.bankName} onChange={e=>{ const s=NIGERIAN_BANKS.find(b=>b.name===e.target.value); setBankForm({...bankForm,bankName:e.target.value,bankCode:s?.code||''}); }}><option value="">Select your bank...</option>{NIGERIAN_BANKS.map(bank=>(<option key={bank.code} value={bank.name}>{bank.name}</option>))}</select></div>
-          <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Account Number</label><input style={inp} placeholder="10-digit number" maxLength={10} value={bankForm.accountNumber} onChange={e=>setBankForm({...bankForm,accountNumber:e.target.value})} /></div>
-          <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Account Name</label><input style={inp} placeholder="As on bank records" value={bankForm.accountName} onChange={e=>setBankForm({...bankForm,accountName:e.target.value})} /></div>
-          <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Bank Code <span style={{color:C.success,fontSize:11}}>(auto-filled)</span></label><input style={{...inp,background:'#f9fafb',color:C.gray}} value={bankForm.bankCode} readOnly /></div>
-        </div>
-        <button style={{...btn(C.success),padding:'10px 24px',fontSize:14}} onClick={saveBank} disabled={savingBank}>{savingBank?'Saving...':'✓ Save Bank Details'}</button>
-      </div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}><h1 style={{fontSize:26,fontWeight:800}}>Settings</h1><button style={btn(C.primary)} onClick={save} disabled={saving}>{saving?'Saving...':'💾 Save Changes'}</button></div>
+      <div style={{...card,marginBottom:16}}><h3 style={{fontWeight:800,marginBottom:14}}>📸 Restaurant Photo</h3><p style={{color:C.gray,fontSize:13,marginBottom:16}}>This photo appears on the customer app home screen and restaurant page.</p><div style={{display:'flex',alignItems:'center',gap:20}}><div style={{width:120,height:90,borderRadius:14,overflow:'hidden',background:'#f5f5f5',border:`2px dashed ${C.border}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:36,flexShrink:0}}>{form.logo?<img src={form.logo} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} />:'🏪'}</div><div><label style={{...btn(C.primary),display:'inline-block',cursor:'pointer',padding:'10px 20px',fontSize:14}}>{uploadingLogo?'⏳ Uploading...':'📷 Upload Photo'}<input type="file" accept="image/*" onChange={handleLogoUpload} style={{display:'none'}} disabled={uploadingLogo} /></label><p style={{color:C.gray,fontSize:12,marginTop:8}}>JPG or PNG, at least 400×300px.</p>{form.logo&&<p style={{color:C.success,fontSize:12,marginTop:4,fontWeight:600}}>✓ Photo uploaded successfully</p>}</div></div></div>
+      <div style={{...card,marginBottom:16}}><h3 style={{fontWeight:800,marginBottom:14}}>🟢 Restaurant Status</h3><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}><span style={{fontWeight:600}}>Currently {form.isOpen?'Open':'Closed'}</span><input type="checkbox" checked={form.isOpen} onChange={e=>setForm({...form,isOpen:e.target.checked})} style={{width:22,height:22,cursor:'pointer',accentColor:C.primary}} /></div><p style={{color:C.gray,fontSize:13,marginBottom:14}}>{form.isOpen?'Accepting orders from customers':'Not accepting orders'}</p><div style={{display:'grid',gridTemplateColumns:'1fr auto 1fr',gap:12,alignItems:'end'}}><div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Opens</label><input style={inp} value={form.openTime} onChange={e=>setForm({...form,openTime:e.target.value})} /></div><span style={{paddingBottom:10,color:C.gray,fontWeight:700}}>→</span><div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Closes</label><input style={inp} value={form.closeTime} onChange={e=>setForm({...form,closeTime:e.target.value})} /></div></div></div>
+      <div style={{...card,marginBottom:16}}><h3 style={{fontWeight:800,marginBottom:14}}>🏪 Restaurant Details</h3><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>{[['Restaurant Name','name'],['Phone','phone'],['Address','address'],['Cuisine Type','cuisineType']].map(([l,k])=>(<div key={k}><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>{l}</label><input style={inp} value={form[k]} onChange={e=>setForm({...form,[k]:e.target.value})} /></div>))}</div><div style={{marginTop:14}}><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Description</label><textarea style={{...inp,height:90,resize:'vertical'}} value={form.description} onChange={e=>setForm({...form,description:e.target.value})} /></div></div>
+      <div style={{...card,borderTop:`3px solid ${C.success}`}}><h3 style={{fontWeight:800,marginBottom:4}}>🏦 Bank Details for Withdrawals</h3><p style={{color:C.gray,fontSize:13,marginBottom:16}}>Required to receive withdrawal payments via Paystack</p><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14}}><div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Bank Name</label><select style={{...inp,cursor:'pointer',background:'#fff',height:44}} value={bankForm.bankName} onChange={e=>{ const s=NIGERIAN_BANKS.find(b=>b.name===e.target.value); setBankForm({...bankForm,bankName:e.target.value,bankCode:s?.code||''}); }}><option value="">Select your bank...</option>{NIGERIAN_BANKS.map(bank=>(<option key={bank.code} value={bank.name}>{bank.name}</option>))}</select></div><div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Account Number</label><input style={inp} placeholder="10-digit number" maxLength={10} value={bankForm.accountNumber} onChange={e=>setBankForm({...bankForm,accountNumber:e.target.value})} /></div><div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Account Name</label><input style={inp} placeholder="As on bank records" value={bankForm.accountName} onChange={e=>setBankForm({...bankForm,accountName:e.target.value})} /></div><div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Bank Code <span style={{color:C.success,fontSize:11}}>(auto-filled)</span></label><input style={{...inp,background:'#f9fafb',color:C.gray}} value={bankForm.bankCode} readOnly /></div></div><button style={{...btn(C.success),padding:'10px 24px',fontSize:14}} onClick={saveBank} disabled={savingBank}>{savingBank?'Saving...':'✓ Save Bank Details'}</button></div>
     </div>
   );
 }
