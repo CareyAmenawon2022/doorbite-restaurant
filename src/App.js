@@ -338,7 +338,7 @@ function Register({ onBack }) {
           </div>
 
           <div style={{background:'#FFF7ED',borderRadius:12,padding:14,marginBottom:20,border:'1px solid #FED7AA'}}>
-            <p style={{color:'#92400E',fontSize:13,margin:0}}>📋 By submitting, you agree to DoorBite's partner terms. We charge a <strong>10% platform fee</strong> on all orders.</p>
+            <p style={{color:'#92400E',fontSize:13,margin:0}}>📋 By submitting, you agree to DoorBite's partner terms. We charge a <strong>15% platform fee</strong> on all orders.</p>
           </div>
 
           <button type="submit" style={{...btn(C.primary),width:'100%',padding:16,fontSize:16}} disabled={loading}>
