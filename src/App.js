@@ -2,10 +2,10 @@ import React, { useState, useEffect, useRef, createContext, useContext } from 'r
 import axios from 'axios';
 import { io } from 'socket.io-client';
 
-const API = 'https://api.doorbite.ng/api';
+const API    = 'https://api.doorbite.ng/api';
 const SOCKET = 'https://api.doorbite.ng';
 
-const CLOUD_NAME = 'du34xyidb';
+const CLOUD_NAME    = 'du34xyidb';
 const UPLOAD_PRESET = 'quicky';
 
 const api = axios.create({ baseURL: API });
@@ -13,39 +13,34 @@ api.interceptors.request.use(c => { const t=localStorage.getItem('r_token'); if(
 
 const C = { primary:'#FF6B2C', dark:'#1A1A1A', white:'#fff', bg:'#F8F8F8', border:'#E8E8E8', gray:'#888', success:'#22C55E', error:'#EF4444', warning:'#F59E0B' };
 const card = { background:'#fff', borderRadius:16, padding:20, boxShadow:'0 2px 8px rgba(0,0,0,0.05)', marginBottom:14 };
-const btn = (bg,color='#fff') => ({ background:bg, color, border:'none', padding:'9px 18px', borderRadius:10, cursor:'pointer', fontWeight:700, fontSize:13 });
-const inp = { border:`1px solid ${C.border}`, borderRadius:10, padding:'10px 14px', fontSize:14, width:'100%', outline:'none', boxSizing:'border-box' };
+const btn  = (bg, color='#fff') => ({ background:bg, color, border:'none', padding:'9px 18px', borderRadius:10, cursor:'pointer', fontWeight:700, fontSize:13 });
+const inp  = { border:`1px solid ${C.border}`, borderRadius:10, padding:'10px 14px', fontSize:14, width:'100%', outline:'none', boxSizing:'border-box' };
 
 // ── CLOUDINARY UPLOAD ─────────────────────────────────────────────────────────
 async function uploadToCloudinary(file) {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('upload_preset', UPLOAD_PRESET);
-  const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, { method:'POST', body:formData });
+  const res  = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, { method:'POST', body:formData });
   const data = await res.json();
   if (data.secure_url) return data.secure_url;
   throw new Error(data.error?.message || 'Upload failed');
 }
 
-// ── NEW ORDER ALERT — sound + browser notification + tab flash ────────────────
+// ── ORDER ALERTS ──────────────────────────────────────────────────────────────
 let tabFlashInterval = null;
-const originalTitle = document.title;
+const originalTitle  = document.title;
 
 function playOrderSound() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    // Three beeps — classic restaurant bell pattern
     [0, 0.25, 0.5].forEach(startOffset => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.frequency.value = 880;
-      osc.type = 'sine';
+      const osc = ctx.createOscillator(); const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.frequency.value = 880; osc.type = 'sine';
       gain.gain.setValueAtTime(0.8, ctx.currentTime + startOffset);
       gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + startOffset + 0.2);
-      osc.start(ctx.currentTime + startOffset);
-      osc.stop(ctx.currentTime + startOffset + 0.25);
+      osc.start(ctx.currentTime + startOffset); osc.stop(ctx.currentTime + startOffset + 0.25);
     });
   } catch {}
 }
@@ -53,54 +48,30 @@ function playOrderSound() {
 function flashTabTitle(orderCode) {
   if (tabFlashInterval) clearInterval(tabFlashInterval);
   let on = true;
-  tabFlashInterval = setInterval(() => {
-    document.title = on ? `🔔 NEW ORDER #${orderCode}!` : originalTitle;
-    on = !on;
-  }, 800);
-  // Stop flashing after 30 seconds
-  setTimeout(() => {
-    if (tabFlashInterval) clearInterval(tabFlashInterval);
-    document.title = originalTitle;
-  }, 30000);
+  tabFlashInterval = setInterval(() => { document.title = on ? `🔔 NEW ORDER #${orderCode}!` : originalTitle; on = !on; }, 800);
+  setTimeout(() => { if (tabFlashInterval) clearInterval(tabFlashInterval); document.title = originalTitle; }, 30000);
 }
 
-function stopTabFlash() {
-  if (tabFlashInterval) clearInterval(tabFlashInterval);
-  document.title = originalTitle;
-}
+function stopTabFlash() { if (tabFlashInterval) clearInterval(tabFlashInterval); document.title = originalTitle; }
 
 async function showBrowserNotification(order) {
   try {
     if (!('Notification' in window)) return;
-    if (Notification.permission === 'default') {
-      await Notification.requestPermission();
-    }
+    if (Notification.permission === 'default') await Notification.requestPermission();
     if (Notification.permission === 'granted') {
       const n = new Notification('🍽️ New Order!', {
         body: `#${order.orderCode} — ${order.items?.map(i=>`${i.name} ×${i.quantity}`).join(', ')} — ₦${order.total?.toLocaleString()}`,
-        icon: '/favicon.ico',
-        badge: '/favicon.ico',
-        tag: `order-${order._id}`,       // replaces previous notification instead of stacking
-        requireInteraction: true,         // stays until dismissed
+        icon: '/favicon.ico', badge: '/favicon.ico', tag: `order-${order._id}`, requireInteraction: true,
       });
       n.onclick = () => { window.focus(); n.close(); };
     }
   } catch {}
 }
 
-function fireNewOrderAlert(order) {
-  playOrderSound();
-  flashTabTitle(order.orderCode);
-  showBrowserNotification(order);
-}
+function fireNewOrderAlert(order) { playOrderSound(); flashTabTitle(order.orderCode); showBrowserNotification(order); }
 
-// ── REQUEST BROWSER NOTIFICATION PERMISSION on app load ──────────────────────
 if ('Notification' in window && Notification.permission === 'default') {
-  // Defer until user interaction so browser doesn't block it
-  window.addEventListener('click', function askOnce() {
-    Notification.requestPermission();
-    window.removeEventListener('click', askOnce);
-  }, { once: true });
+  window.addEventListener('click', function askOnce() { Notification.requestPermission(); window.removeEventListener('click', askOnce); }, { once: true });
 }
 
 const NIGERIAN_BANKS = [
@@ -117,8 +88,8 @@ const NIGERIAN_BANKS = [
 
 const CUISINES = ['Nigerian','Continental','Chinese','Indian','Italian','Fast Food','Seafood','Vegetarian','Grills & BBQ','Pastries & Bakery','Pizza','Burgers'];
 
-const AuthCtx = createContext(null);
-const useAuth = () => useContext(AuthCtx);
+const AuthCtx  = createContext(null);
+const useAuth  = () => useContext(AuthCtx);
 
 function AuthProvider({children}) {
   const [user,setUser]=useState(null); const [restaurant,setRestaurant]=useState(null); const [loading,setLoading]=useState(true);
@@ -129,56 +100,250 @@ function AuthProvider({children}) {
   return <AuthCtx.Provider value={{user,restaurant,setRestaurant,login,logout}}>{children}</AuthCtx.Provider>;
 }
 
+// ── LOCATION PICKER COMPONENT — reused in Register + Settings ─────────────────
+function LocationPicker({ value, onChange, label = 'Restaurant Location' }) {
+  const [query, setQuery]           = useState('');
+  const [suggestions, setSuggestions] = useState([]);
+  const [searching, setSearching]   = useState(false);
+  const debounceRef                 = useRef(null);
+
+  // Populate input when value already exists
+  useEffect(() => {
+    if (value?.address && !query) setQuery(value.address);
+  }, [value?.address]);
+
+  const search = async (q) => {
+    if (!q || q.length < 3) { setSuggestions([]); return; }
+    setSearching(true);
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q + ' Benin City Nigeria')}&format=json&limit=6&addressdetails=1`,
+        { headers: { 'Accept-Language': 'en' } }
+      );
+      const data = await res.json();
+      setSuggestions(data);
+    } catch {}
+    finally { setSearching(false); }
+  };
+
+  const handleInput = (e) => {
+    const q = e.target.value;
+    setQuery(q);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => search(q), 400);
+  };
+
+  const pick = (place) => {
+    const lat  = parseFloat(place.lat);
+    const lng  = parseFloat(place.lon);
+    const addr = place.display_name;
+    setQuery(addr);
+    setSuggestions([]);
+    onChange({ lat, lng, address: addr });
+  };
+
+  const clear = () => {
+    setQuery('');
+    setSuggestions([]);
+    onChange(null);
+  };
+
+  return (
+    <div style={{ position:'relative' }}>
+      <label style={{ fontSize:13, fontWeight:600, display:'block', marginBottom:6 }}>{label} *</label>
+      <div style={{ position:'relative' }}>
+        <input
+          style={{ ...inp, paddingRight:36, borderColor: value?.lat ? C.success : C.border }}
+          placeholder="Search your restaurant address in Benin City..."
+          value={query}
+          onChange={handleInput}
+        />
+        {searching && (
+          <div style={{ position:'absolute', right:10, top:'50%', transform:'translateY(-50%)', color:C.gray, fontSize:12 }}>⏳</div>
+        )}
+        {value?.lat && !searching && (
+          <button onClick={clear} style={{ position:'absolute', right:10, top:'50%', transform:'translateY(-50%)', background:'none', border:'none', cursor:'pointer', color:C.gray, fontSize:16 }}>✕</button>
+        )}
+      </div>
+
+      {/* Suggestions dropdown */}
+      {suggestions.length > 0 && (
+        <div style={{ position:'absolute', top:'100%', left:0, right:0, background:'#fff', border:`1px solid ${C.border}`, borderRadius:10, boxShadow:'0 8px 24px rgba(0,0,0,0.12)', zIndex:100, maxHeight:220, overflowY:'auto', marginTop:4 }}>
+          {suggestions.map((place, i) => (
+            <div key={place.place_id}
+              onClick={() => pick(place)}
+              style={{ padding:'10px 14px', cursor:'pointer', borderBottom: i < suggestions.length-1 ? `1px solid ${C.border}` : 'none', fontSize:13, lineHeight:1.4 }}
+              onMouseEnter={e => e.currentTarget.style.background = '#FFF7ED'}
+              onMouseLeave={e => e.currentTarget.style.background = '#fff'}
+            >
+              <span style={{ marginRight:8 }}>📍</span>
+              <strong>{place.address?.road || place.address?.suburb || place.name}</strong>
+              {place.address?.city && <span style={{ color:C.gray }}> · {place.address.city}</span>}
+              <div style={{ color:C.gray, fontSize:11, marginTop:2, marginLeft:22 }}>{place.display_name}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Confirmed location preview */}
+      {value?.lat && (
+        <div style={{ marginTop:8, background:'#F0FDF4', borderRadius:10, padding:'10px 14px', border:`1px solid #BBF7D0`, display:'flex', alignItems:'center', justifyContent:'space-between', gap:10 }}>
+          <div style={{ flex:1 }}>
+            <div style={{ fontSize:12, fontWeight:700, color:C.success, marginBottom:2 }}>✅ Location confirmed</div>
+            <div style={{ fontSize:11, color:C.gray }}>
+              {value.lat.toFixed(5)}, {value.lng.toFixed(5)}
+            </div>
+          </div>
+          <a
+            href={`https://www.google.com/maps?q=${value.lat},${value.lng}`}
+            target="_blank"
+            rel="noreferrer"
+            style={{ color:C.primary, fontSize:12, fontWeight:700, textDecoration:'none', flexShrink:0 }}
+          >
+            Verify on map →
+          </a>
+        </div>
+      )}
+
+      {/* Helper text */}
+      {!value?.lat && (
+        <div style={{ fontSize:11, color:C.gray, marginTop:6 }}>
+          💡 Type your street name or area — e.g. "12 Sapele Road" or "GRA Benin City"
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── REGISTER ──────────────────────────────────────────────────────────────────
 function Register({ onBack }) {
-  const [form,setForm]=useState({ownerName:'',email:'',password:'',phone:'',restaurantName:'',cuisineType:'',address:'',description:''});
-  const [loading,setLoading]=useState(false); const [success,setSuccess]=useState(false); const [error,setError]=useState('');
-  const handle=async e=>{ e.preventDefault(); if(!form.ownerName||!form.email||!form.password||!form.phone||!form.restaurantName||!form.cuisineType||!form.address) return setError('Please fill in all required fields'); setLoading(true); setError(''); try{ await axios.post(`${API}/auth/register-restaurant`,form); setSuccess(true); }catch(err){ setError(err.response?.data?.message||err.message); }finally{ setLoading(false); } };
-  if(success) return (
+  const [form,setForm]       = useState({ ownerName:'', email:'', password:'', phone:'', restaurantName:'', cuisineType:'', address:'', description:'' });
+  const [location,setLocation] = useState(null); // { lat, lng, address }
+  const [loading,setLoading] = useState(false);
+  const [success,setSuccess] = useState(false);
+  const [error,setError]     = useState('');
+
+  const handle = async e => {
+    e.preventDefault();
+    if (!form.ownerName||!form.email||!form.password||!form.phone||!form.restaurantName||!form.cuisineType||!form.address)
+      return setError('Please fill in all required fields');
+    setLoading(true); setError('');
+    try {
+      await axios.post(`${API}/auth/register-restaurant`, {
+        ...form,
+        location: location ? { lat: location.lat, lng: location.lng } : undefined,
+      });
+      setSuccess(true);
+    } catch(err) { setError(err.response?.data?.message || err.message); }
+    finally { setLoading(false); }
+  };
+
+  if (success) return (
     <div style={{display:'flex',height:'100vh',alignItems:'center',justifyContent:'center',background:C.bg}}>
       <div style={{background:'#fff',borderRadius:24,padding:48,maxWidth:480,textAlign:'center',boxShadow:'0 4px 24px rgba(0,0,0,0.08)'}}>
         <div style={{fontSize:64,marginBottom:16}}>🎉</div>
         <h2 style={{fontSize:26,fontWeight:800,marginBottom:8}}>Application Submitted!</h2>
         <p style={{color:C.gray,fontSize:15,lineHeight:1.6,marginBottom:8}}>Our team will review and activate your account within <strong>24 hours</strong>.</p>
-        <div style={{background:'#F0FDF4',borderRadius:12,padding:16,marginBottom:28,border:'1px solid #BBF7D0'}}><p style={{color:'#15803D',fontWeight:600,fontSize:13,margin:0}}>✓ Restaurant: {form.restaurantName}<br/>✓ Cuisine: {form.cuisineType}<br/>✓ Address: {form.address}</p></div>
+        <div style={{background:'#F0FDF4',borderRadius:12,padding:16,marginBottom:28,border:'1px solid #BBF7D0'}}>
+          <p style={{color:'#15803D',fontWeight:600,fontSize:13,margin:0}}>
+            ✓ Restaurant: {form.restaurantName}<br/>
+            ✓ Cuisine: {form.cuisineType}<br/>
+            ✓ Address: {form.address}<br/>
+            {location && `✓ Location set: ${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`}
+          </p>
+        </div>
         <button onClick={onBack} style={{...btn(C.primary),padding:'12px 32px',fontSize:15}}>← Back to Login</button>
       </div>
     </div>
   );
+
   return (
     <div style={{display:'flex',minHeight:'100vh',background:C.bg}}>
+      {/* Sidebar */}
       <div style={{width:300,background:C.primary,padding:40,display:'flex',flexDirection:'column',justifyContent:'center',position:'sticky',top:0,height:'100vh',flexShrink:0}}>
-        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:32}}><div style={{width:48,height:48,borderRadius:12,background:'rgba(255,255,255,0.2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:24}}>🍽️</div><div><div style={{color:'#fff',fontWeight:800,fontSize:20}}>DoorBite</div><div style={{color:'rgba(255,255,255,0.7)',fontSize:12}}>Restaurant Partner</div></div></div>
+        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:32}}>
+          <div style={{width:48,height:48,borderRadius:12,background:'rgba(255,255,255,0.2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:24}}>🍽️</div>
+          <div><div style={{color:'#fff',fontWeight:800,fontSize:20}}>DoorBite</div><div style={{color:'rgba(255,255,255,0.7)',fontSize:12}}>Restaurant Partner</div></div>
+        </div>
         <h2 style={{color:'#fff',fontWeight:800,fontSize:20,marginBottom:8}}>Grow your restaurant with us</h2>
-        <p style={{color:'rgba(255,255,255,0.8)',fontSize:13,lineHeight:1.6,marginBottom:24}}>Join restaurants delivering to customers across Lagos.</p>
-        {[['📦','Get orders 24/7'],['💰','Get paid after every delivery'],['📊','Track earnings in real time'],['🛵','We handle the delivery'],['⭐','Build your restaurant rating']].map(([icon,text])=>(<div key={text} style={{display:'flex',alignItems:'center',gap:12,marginBottom:12}}><span style={{fontSize:18}}>{icon}</span><span style={{color:'rgba(255,255,255,0.9)',fontSize:13}}>{text}</span></div>))}
+        <p style={{color:'rgba(255,255,255,0.8)',fontSize:13,lineHeight:1.6,marginBottom:24}}>Join restaurants delivering to customers across Edo State.</p>
+        {[['📦','Get orders 24/7'],['💰','Get paid after every delivery'],['📊','Track earnings in real time'],['🛵','We handle the delivery'],['⭐','Build your restaurant rating']].map(([icon,text])=>(
+          <div key={text} style={{display:'flex',alignItems:'center',gap:12,marginBottom:12}}>
+            <span style={{fontSize:18}}>{icon}</span>
+            <span style={{color:'rgba(255,255,255,0.9)',fontSize:13}}>{text}</span>
+          </div>
+        ))}
         <button onClick={onBack} style={{...btn('rgba(255,255,255,0.15)'),marginTop:32,border:'1px solid rgba(255,255,255,0.3)',padding:'10px 20px'}}>← Already have an account</button>
       </div>
+
+      {/* Form */}
       <div style={{flex:1,overflowY:'auto',display:'flex',alignItems:'flex-start',justifyContent:'center',padding:40}}>
-        <form onSubmit={handle} style={{background:'#fff',borderRadius:24,padding:36,width:'100%',maxWidth:560,boxShadow:'0 4px 24px rgba(0,0,0,0.08)'}}>
+        <form onSubmit={handle} style={{background:'#fff',borderRadius:24,padding:36,width:'100%',maxWidth:580,boxShadow:'0 4px 24px rgba(0,0,0,0.08)'}}>
           <h2 style={{fontSize:26,fontWeight:800,marginBottom:4}}>Apply to Partner</h2>
           <p style={{color:C.gray,marginBottom:28,fontSize:14}}>Fill in the details below and we'll review your application within 24 hours.</p>
-          {error&&<div style={{background:'#FEE2E2',color:C.error,padding:12,borderRadius:10,marginBottom:20,fontSize:13}}>{error}</div>}
+          {error && <div style={{background:'#FEE2E2',color:C.error,padding:12,borderRadius:10,marginBottom:20,fontSize:13}}>{error}</div>}
+
+          {/* Owner info */}
           <div style={{background:C.bg,borderRadius:12,padding:16,marginBottom:20}}>
             <h3 style={{fontWeight:800,fontSize:15,marginBottom:14}}>👤 Owner Information</h3>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
-              <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Full Name *</label><input style={inp} placeholder="Your full name" value={form.ownerName} onChange={e=>setForm({...form,ownerName:e.target.value})} /></div>
-              <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Phone Number *</label><input style={inp} placeholder="08012345678" value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} /></div>
-              <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Email Address *</label><input style={inp} type="email" placeholder="you@restaurant.com" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} /></div>
-              <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Password *</label><input style={inp} type="password" placeholder="Create a password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} /></div>
+              {[['Full Name *','text','ownerName','Your full name'],['Phone Number *','tel','phone','08012345678'],['Email Address *','email','email','you@restaurant.com'],['Password *','password','password','Create a password']].map(([l,type,k,ph])=>(
+                <div key={k}><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>{l}</label><input style={inp} type={type} placeholder={ph} value={form[k]} onChange={e=>setForm({...form,[k]:e.target.value})} /></div>
+              ))}
             </div>
           </div>
+
+          {/* Restaurant info */}
           <div style={{background:C.bg,borderRadius:12,padding:16,marginBottom:20}}>
             <h3 style={{fontWeight:800,fontSize:15,marginBottom:14}}>🏪 Restaurant Information</h3>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14}}>
-              <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Restaurant Name *</label><input style={inp} placeholder="e.g. Mama's Kitchen" value={form.restaurantName} onChange={e=>setForm({...form,restaurantName:e.target.value})} /></div>
-              <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Cuisine Type *</label><select style={{...inp,height:44,cursor:'pointer',background:'#fff'}} value={form.cuisineType} onChange={e=>setForm({...form,cuisineType:e.target.value})}><option value="">Select cuisine type...</option>{CUISINES.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+              <div>
+                <label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Restaurant Name *</label>
+                <input style={inp} placeholder="e.g. Mama's Kitchen" value={form.restaurantName} onChange={e=>setForm({...form,restaurantName:e.target.value})} />
+              </div>
+              <div>
+                <label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Cuisine Type *</label>
+                <select style={{...inp,height:44,cursor:'pointer',background:'#fff'}} value={form.cuisineType} onChange={e=>setForm({...form,cuisineType:e.target.value})}>
+                  <option value="">Select cuisine type...</option>
+                  {CUISINES.map(c=><option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
             </div>
-            <div style={{marginBottom:14}}><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Restaurant Address *</label><input style={inp} placeholder="e.g. 12 Admiralty Way, Lekki Phase 1, Lagos" value={form.address} onChange={e=>setForm({...form,address:e.target.value})} /></div>
-            <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Description <span style={{color:C.gray,fontWeight:400}}>(optional)</span></label><textarea style={{...inp,height:80,resize:'vertical'}} placeholder="Tell customers what makes your restaurant special..." value={form.description} onChange={e=>setForm({...form,description:e.target.value})} /></div>
+            <div style={{marginBottom:14}}>
+              <label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Street Address * <span style={{fontWeight:400,color:C.gray}}>(shown to customers)</span></label>
+              <input style={inp} placeholder="e.g. 12 Sapele Road, GRA, Benin City" value={form.address} onChange={e=>setForm({...form,address:e.target.value})} />
+            </div>
+            <div style={{marginBottom:14}}>
+              <textarea style={{...inp,height:80,resize:'vertical'}} placeholder="Tell customers what makes your restaurant special... (optional)" value={form.description} onChange={e=>setForm({...form,description:e.target.value})} />
+            </div>
           </div>
-          <div style={{background:'#FFF7ED',borderRadius:12,padding:14,marginBottom:20,border:'1px solid #FED7AA'}}><p style={{color:'#92400E',fontSize:13,margin:0}}>📋 By submitting, you agree to DoorBite's partner terms. We charge a <strong>10% platform fee</strong> on all orders.</p></div>
-          <button type="submit" style={{...btn(C.primary),width:'100%',padding:16,fontSize:16}} disabled={loading}>{loading?'⏳ Submitting application...':'🚀 Submit Application'}</button>
+
+          {/* Location picker */}
+          <div style={{background:'#FFF7ED',borderRadius:12,padding:16,marginBottom:20,border:`1px solid #FED7AA`}}>
+            <h3 style={{fontWeight:800,fontSize:15,marginBottom:4}}>📍 Pin Your Location on the Map</h3>
+            <p style={{color:'#92400E',fontSize:13,marginBottom:14}}>
+              This helps riders navigate to your restaurant accurately. Search your address below to confirm your exact location.
+            </p>
+            <LocationPicker
+              value={location}
+              onChange={setLocation}
+              label="Search your restaurant address"
+            />
+            {!location && (
+              <div style={{background:'#FEF3C7',borderRadius:8,padding:10,marginTop:10,border:`1px solid #FDE68A`}}>
+                <div style={{fontSize:12,color:'#92400E',fontWeight:600}}>⚠️ Location not set</div>
+                <div style={{fontSize:11,color:'#B45309',marginTop:2}}>You can set this later from Settings, but it's required for riders to find you.</div>
+              </div>
+            )}
+          </div>
+
+          <div style={{background:'#FFF7ED',borderRadius:12,padding:14,marginBottom:20,border:'1px solid #FED7AA'}}>
+            <p style={{color:'#92400E',fontSize:13,margin:0}}>📋 By submitting, you agree to DoorBite's partner terms. We charge a <strong>10% platform fee</strong> on all orders.</p>
+          </div>
+
+          <button type="submit" style={{...btn(C.primary),width:'100%',padding:16,fontSize:16}} disabled={loading}>
+            {loading ? '⏳ Submitting application...' : '🚀 Submit Application'}
+          </button>
         </form>
       </div>
     </div>
@@ -233,41 +398,44 @@ function Sidebar({page,setPage,pendingCount}) {
   );
 }
 
-// ── OVERVIEW — fires alert on order:new ───────────────────────────────────────
 function Overview({setPage}) {
   const {restaurant}=useAuth();
   const [analytics,setAnalytics]=useState(null);
   const [liveOrders,setLiveOrders]=useState([]);
   const socketRef=useRef(null);
-
   useEffect(()=>{
     api.get('/restaurants/analytics').then(r=>setAnalytics(r.data)).catch(()=>{});
     api.get('/orders/restaurant').then(r=>setLiveOrders(r.data.filter(o=>['pending','confirmed','preparing'].includes(o.status)).slice(0,5))).catch(()=>{});
     if(!restaurant) return;
     const socket=io(SOCKET); socketRef.current=socket;
     socket.emit('restaurant:join',restaurant._id);
-    socket.on('order:new', order => {
-      setLiveOrders(prev=>[order,...prev.slice(0,4)]);
-      // 🔔 FIRE ALL ALERTS
-      fireNewOrderAlert(order);
-    });
+    socket.on('order:new', order=>{ setLiveOrders(prev=>[order,...prev.slice(0,4)]); fireNewOrderAlert(order); });
     socket.on('order:status',({orderId,status})=>setLiveOrders(prev=>prev.map(o=>o._id===orderId?{...o,status}:o).filter(o=>!['delivered','rejected','cancelled'].includes(o.status))));
     return()=>socket.disconnect();
   },[restaurant]);
-
   const confirmOrder=async(orderId,prepTime)=>{ await api.patch(`/orders/${orderId}/status`,{status:'confirmed',prepTime}); setLiveOrders(prev=>prev.map(o=>o._id===orderId?{...o,status:'confirmed',prepTime}:o)); stopTabFlash(); };
   const rejectOrder=async(orderId)=>{ await api.patch(`/orders/${orderId}/status`,{status:'rejected'}); setLiveOrders(prev=>prev.filter(o=>o._id!==orderId)); stopTabFlash(); };
   const markReady=async(orderId)=>{ await api.patch(`/orders/${orderId}/status`,{status:'ready_for_pickup'}); setLiveOrders(prev=>prev.filter(o=>o._id!==orderId)); };
   const now=new Date();
   const greeting=now.getHours()<12?'Good morning':now.getHours()<17?'Good afternoon':'Good evening';
   const pending=liveOrders.filter(o=>o.status==='pending').length;
-
   return (
     <div style={{padding:28,overflowY:'auto',flex:1}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:24}}>
         <div><h1 style={{fontSize:26,fontWeight:800}}>{greeting}, {restaurant?.name?.split(' ')[0]} 👋</h1><p style={{color:C.gray}}>{now.toLocaleDateString('en-US',{weekday:'long',day:'numeric',month:'long'})}</p></div>
-        {pending>0&&<div onClick={()=>{ setPage('orders'); stopTabFlash(); }} style={{background:'#FEF3C7',border:'1px solid #F59E0B',padding:'8px 16px',borderRadius:20,cursor:'pointer',fontWeight:700,fontSize:13,color:'#92400E',animation:'pulse 1s infinite'}}>🔔 {pending} new order{pending>1?'s':''} need attention</div>}
+        {pending>0&&<div onClick={()=>{ setPage('orders'); stopTabFlash(); }} style={{background:'#FEF3C7',border:'1px solid #F59E0B',padding:'8px 16px',borderRadius:20,cursor:'pointer',fontWeight:700,fontSize:13,color:'#92400E'}}>🔔 {pending} new order{pending>1?'s':''} need attention</div>}
       </div>
+      {/* Location warning */}
+      {!restaurant?.location?.lat && (
+        <div onClick={()=>setPage('settings')} style={{background:'#FFF7ED',border:`1px solid ${C.warning}`,borderRadius:14,padding:14,marginBottom:20,cursor:'pointer',display:'flex',alignItems:'center',gap:12}}>
+          <span style={{fontSize:24}}>📍</span>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:700,fontSize:14,color:'#92400E'}}>Your restaurant location is not set</div>
+            <div style={{fontSize:13,color:'#B45309',marginTop:2}}>Riders won't know where to pick up orders. Click to set your location in Settings.</div>
+          </div>
+          <span style={{color:C.primary,fontWeight:700,fontSize:13}}>Set Now →</span>
+        </div>
+      )}
       <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr',gap:14,marginBottom:14}}>
         <div style={{...card,background:C.primary,marginBottom:0}}><div style={{color:'rgba(255,255,255,0.7)',fontSize:11,fontWeight:700,letterSpacing:0.5}}>TODAY'S REVENUE</div><div style={{color:'#fff',fontSize:28,fontWeight:800,margin:'4px 0'}}>₦{(analytics?.todayRevenue||0).toLocaleString()}</div><div style={{color:'rgba(255,255,255,0.6)',fontSize:12}}>{analytics?.todayOrders||0} orders</div></div>
         {[['PENDING',pending,'Need confirmation'],['IN KITCHEN',liveOrders.filter(o=>o.status==='preparing').length,'Being prepared'],['WALLET','₦'+(analytics?.walletBalance||0).toLocaleString(),'Available balance']].map(([l,v,s])=>(<div key={l} style={{...card,marginBottom:0}}><div style={{color:C.gray,fontSize:11,fontWeight:700,letterSpacing:0.5}}>{l}</div><div style={{fontSize:22,fontWeight:800,margin:'4px 0'}}>{v}</div><div style={{color:C.gray,fontSize:12}}>{s}</div></div>))}
@@ -289,32 +457,24 @@ function Overview({setPage}) {
   );
 }
 
-// ── ORDERS — fires alert on order:new ─────────────────────────────────────────
 function Orders() {
   const {restaurant}=useAuth();
   const [orders,setOrders]=useState([]);
   const [tab,setTab]=useState('pending');
   const socketRef=useRef(null);
   const TABS={pending:['pending'],preparing:['confirmed','preparing'],'en route':['ready_for_pickup','accepted','picked_up'],done:['delivered','rejected','cancelled']};
-
   useEffect(()=>{
     api.get('/orders/restaurant').then(r=>setOrders(r.data)).catch(()=>{});
     if(!restaurant) return;
     const socket=io(SOCKET); socketRef.current=socket;
     socket.emit('restaurant:join',restaurant._id);
-    socket.on('order:new', o => {
-      setOrders(prev=>[o,...prev]);
-      // 🔔 FIRE ALL ALERTS (also fires from Orders page if tab is open)
-      fireNewOrderAlert(o);
-    });
+    socket.on('order:new', o=>{ setOrders(prev=>[o,...prev]); fireNewOrderAlert(o); });
     socket.on('order:status',({orderId,status})=>setOrders(prev=>prev.map(o=>o._id===orderId?{...o,status}:o)));
     return()=>socket.disconnect();
   },[restaurant]);
-
   const update=async(id,status,extra={})=>{ await api.patch(`/orders/${id}/status`,{status,...extra}); setOrders(prev=>prev.map(o=>o._id===id?{...o,status,...extra}:o)); stopTabFlash(); };
   const filtered=orders.filter(o=>TABS[tab]?.includes(o.status));
   const SC={pending:C.warning,confirmed:'#3B82F6',preparing:'#8B5CF6',ready_for_pickup:'#06B6D4',delivered:C.success,rejected:C.error,cancelled:C.gray};
-
   return (
     <div style={{padding:28,overflowY:'auto',flex:1}}>
       <h1 style={{fontSize:26,fontWeight:800,marginBottom:20}}>Orders</h1>
@@ -336,14 +496,10 @@ function Orders() {
   );
 }
 
-// ── MENU ──────────────────────────────────────────────────────────────────────
 function Menu() {
   const {restaurant}=useAuth();
-  const [items,setItems]=useState([]);
-  const [cat,setCat]=useState('All');
-  const [showForm,setShowForm]=useState(false);
-  const [form,setForm]=useState({name:'',price:'',category:'Mains',description:'',image:''});
-  const [uploading,setUploading]=useState(false);
+  const [items,setItems]=useState([]); const [cat,setCat]=useState('All'); const [showForm,setShowForm]=useState(false);
+  const [form,setForm]=useState({name:'',price:'',category:'Mains',description:'',image:''}); const [uploading,setUploading]=useState(false);
   const fetch_=()=>{ if(restaurant) api.get(`/menu/${restaurant._id}`).then(r=>setItems(r.data)).catch(()=>{}); };
   useEffect(()=>{ fetch_(); },[restaurant]);
   const handleImageUpload=async e=>{ const file=e.target.files[0]; if(!file) return; setUploading(true); try{ const url=await uploadToCloudinary(file); setForm(f=>({...f,image:url})); }catch(err){ alert('Image upload failed: '+err.message); }finally{ setUploading(false); } };
@@ -398,22 +554,148 @@ function Wallet() {
   );
 }
 
+// ── SETTINGS — includes location section ──────────────────────────────────────
 function Settings() {
   const {restaurant,setRestaurant}=useAuth();
   const [form,setForm]=useState({name:'',phone:'',address:'',cuisineType:'',description:'',isOpen:false,openTime:'08:00',closeTime:'22:00',logo:''});
+  const [location,setLocation]=useState(null);
   const [bankForm,setBankForm]=useState({bankName:'',accountNumber:'',accountName:'',bankCode:''});
   const [saving,setSaving]=useState(false); const [savingBank,setSavingBank]=useState(false); const [uploadingLogo,setUploadingLogo]=useState(false);
-  useEffect(()=>{ if(restaurant){ setForm({name:restaurant.name||'',phone:restaurant.phone||'',address:restaurant.address||'',cuisineType:restaurant.cuisineType||'',description:restaurant.description||'',isOpen:restaurant.isOpen||false,openTime:restaurant.openTime||'08:00',closeTime:restaurant.closeTime||'22:00',logo:restaurant.logo||''}); if(restaurant.bankDetails) setBankForm(restaurant.bankDetails); } },[restaurant]);
+
+  useEffect(()=>{
+    if(restaurant){
+      setForm({name:restaurant.name||'',phone:restaurant.phone||'',address:restaurant.address||'',cuisineType:restaurant.cuisineType||'',description:restaurant.description||'',isOpen:restaurant.isOpen||false,openTime:restaurant.openTime||'08:00',closeTime:restaurant.closeTime||'22:00',logo:restaurant.logo||''});
+      if(restaurant.bankDetails) setBankForm(restaurant.bankDetails);
+      if(restaurant.location?.lat) setLocation({ lat:restaurant.location.lat, lng:restaurant.location.lng, address:restaurant.address||'' });
+    }
+  },[restaurant]);
+
   const handleLogoUpload=async e=>{ const file=e.target.files[0]; if(!file) return; setUploadingLogo(true); try{ const url=await uploadToCloudinary(file); setForm(f=>({...f,logo:url})); const {data}=await api.patch('/restaurants/me',{logo:url}); setRestaurant(data); alert('✅ Restaurant photo updated!'); }catch(err){ alert('Upload failed: '+err.message); }finally{ setUploadingLogo(false); } };
-  const save=async()=>{ setSaving(true); try{ const {data}=await api.patch('/restaurants/me',form); setRestaurant(data); alert('Settings saved!'); }catch{ alert('Failed to save'); }finally{ setSaving(false); } };
+
+  const save=async()=>{
+    setSaving(true);
+    try{
+      const payload = { ...form };
+      if (location?.lat) payload.location = { lat: location.lat, lng: location.lng };
+      const {data}=await api.patch('/restaurants/me', payload);
+      setRestaurant(data);
+      alert('Settings saved!');
+    }catch{ alert('Failed to save'); }
+    finally{ setSaving(false); }
+  };
+
   const saveBank=async()=>{ if(!bankForm.accountNumber||!bankForm.bankName||!bankForm.accountName) return alert('Please fill in all bank details'); setSavingBank(true); try{ const {data}=await api.patch('/restaurants/me',{bankDetails:bankForm}); setRestaurant(data); alert('✅ Bank details saved!'); }catch{ alert('Failed to save bank details'); }finally{ setSavingBank(false); } };
+
   return (
     <div style={{padding:28,overflowY:'auto',flex:1}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}><h1 style={{fontSize:26,fontWeight:800}}>Settings</h1><button style={btn(C.primary)} onClick={save} disabled={saving}>{saving?'Saving...':'💾 Save Changes'}</button></div>
-      <div style={{...card,marginBottom:16}}><h3 style={{fontWeight:800,marginBottom:14}}>📸 Restaurant Photo</h3><p style={{color:C.gray,fontSize:13,marginBottom:16}}>This photo appears on the customer app home screen and restaurant page.</p><div style={{display:'flex',alignItems:'center',gap:20}}><div style={{width:120,height:90,borderRadius:14,overflow:'hidden',background:'#f5f5f5',border:`2px dashed ${C.border}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:36,flexShrink:0}}>{form.logo?<img src={form.logo} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} />:'🏪'}</div><div><label style={{...btn(C.primary),display:'inline-block',cursor:'pointer',padding:'10px 20px',fontSize:14}}>{uploadingLogo?'⏳ Uploading...':'📷 Upload Photo'}<input type="file" accept="image/*" onChange={handleLogoUpload} style={{display:'none'}} disabled={uploadingLogo} /></label><p style={{color:C.gray,fontSize:12,marginTop:8}}>JPG or PNG, at least 400×300px.</p>{form.logo&&<p style={{color:C.success,fontSize:12,marginTop:4,fontWeight:600}}>✓ Photo uploaded successfully</p>}</div></div></div>
-      <div style={{...card,marginBottom:16}}><h3 style={{fontWeight:800,marginBottom:14}}>🟢 Restaurant Status</h3><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}><span style={{fontWeight:600}}>Currently {form.isOpen?'Open':'Closed'}</span><input type="checkbox" checked={form.isOpen} onChange={e=>setForm({...form,isOpen:e.target.checked})} style={{width:22,height:22,cursor:'pointer',accentColor:C.primary}} /></div><p style={{color:C.gray,fontSize:13,marginBottom:14}}>{form.isOpen?'Accepting orders from customers':'Not accepting orders'}</p><div style={{display:'grid',gridTemplateColumns:'1fr auto 1fr',gap:12,alignItems:'end'}}><div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Opens</label><input style={inp} value={form.openTime} onChange={e=>setForm({...form,openTime:e.target.value})} /></div><span style={{paddingBottom:10,color:C.gray,fontWeight:700}}>→</span><div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Closes</label><input style={inp} value={form.closeTime} onChange={e=>setForm({...form,closeTime:e.target.value})} /></div></div></div>
-      <div style={{...card,marginBottom:16}}><h3 style={{fontWeight:800,marginBottom:14}}>🏪 Restaurant Details</h3><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>{[['Restaurant Name','name'],['Phone','phone'],['Address','address'],['Cuisine Type','cuisineType']].map(([l,k])=>(<div key={k}><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>{l}</label><input style={inp} value={form[k]} onChange={e=>setForm({...form,[k]:e.target.value})} /></div>))}</div><div style={{marginTop:14}}><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Description</label><textarea style={{...inp,height:90,resize:'vertical'}} value={form.description} onChange={e=>setForm({...form,description:e.target.value})} /></div></div>
-      <div style={{...card,borderTop:`3px solid ${C.success}`}}><h3 style={{fontWeight:800,marginBottom:4}}>🏦 Bank Details for Withdrawals</h3><p style={{color:C.gray,fontSize:13,marginBottom:16}}>Required to receive withdrawal payments via Paystack</p><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14}}><div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Bank Name</label><select style={{...inp,cursor:'pointer',background:'#fff',height:44}} value={bankForm.bankName} onChange={e=>{ const s=NIGERIAN_BANKS.find(b=>b.name===e.target.value); setBankForm({...bankForm,bankName:e.target.value,bankCode:s?.code||''}); }}><option value="">Select your bank...</option>{NIGERIAN_BANKS.map(bank=>(<option key={bank.code} value={bank.name}>{bank.name}</option>))}</select></div><div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Account Number</label><input style={inp} placeholder="10-digit number" maxLength={10} value={bankForm.accountNumber} onChange={e=>setBankForm({...bankForm,accountNumber:e.target.value})} /></div><div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Account Name</label><input style={inp} placeholder="As on bank records" value={bankForm.accountName} onChange={e=>setBankForm({...bankForm,accountName:e.target.value})} /></div><div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Bank Code <span style={{color:C.success,fontSize:11}}>(auto-filled)</span></label><input style={{...inp,background:'#f9fafb',color:C.gray}} value={bankForm.bankCode} readOnly /></div></div><button style={{...btn(C.success),padding:'10px 24px',fontSize:14}} onClick={saveBank} disabled={savingBank}>{savingBank?'Saving...':'✓ Save Bank Details'}</button></div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
+        <h1 style={{fontSize:26,fontWeight:800}}>Settings</h1>
+        <button style={btn(C.primary)} onClick={save} disabled={saving}>{saving?'Saving...':'💾 Save Changes'}</button>
+      </div>
+
+      {/* Photo */}
+      <div style={{...card,marginBottom:16}}>
+        <h3 style={{fontWeight:800,marginBottom:14}}>📸 Restaurant Photo</h3>
+        <p style={{color:C.gray,fontSize:13,marginBottom:16}}>This photo appears on the customer app home screen and restaurant page.</p>
+        <div style={{display:'flex',alignItems:'center',gap:20}}>
+          <div style={{width:120,height:90,borderRadius:14,overflow:'hidden',background:'#f5f5f5',border:`2px dashed ${C.border}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:36,flexShrink:0}}>
+            {form.logo?<img src={form.logo} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} />:'🏪'}
+          </div>
+          <div>
+            <label style={{...btn(C.primary),display:'inline-block',cursor:'pointer',padding:'10px 20px',fontSize:14}}>
+              {uploadingLogo?'⏳ Uploading...':'📷 Upload Photo'}
+              <input type="file" accept="image/*" onChange={handleLogoUpload} style={{display:'none'}} disabled={uploadingLogo} />
+            </label>
+            <p style={{color:C.gray,fontSize:12,marginTop:8}}>JPG or PNG, at least 400×300px.</p>
+            {form.logo&&<p style={{color:C.success,fontSize:12,marginTop:4,fontWeight:600}}>✓ Photo uploaded</p>}
+          </div>
+        </div>
+      </div>
+
+      {/* Status */}
+      <div style={{...card,marginBottom:16}}>
+        <h3 style={{fontWeight:800,marginBottom:14}}>🟢 Restaurant Status</h3>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+          <span style={{fontWeight:600}}>Currently {form.isOpen?'Open':'Closed'}</span>
+          <input type="checkbox" checked={form.isOpen} onChange={e=>setForm({...form,isOpen:e.target.checked})} style={{width:22,height:22,cursor:'pointer',accentColor:C.primary}} />
+        </div>
+        <p style={{color:C.gray,fontSize:13,marginBottom:14}}>{form.isOpen?'Accepting orders from customers':'Not accepting orders'}</p>
+        <div style={{display:'grid',gridTemplateColumns:'1fr auto 1fr',gap:12,alignItems:'end'}}>
+          <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Opens</label><input style={inp} value={form.openTime} onChange={e=>setForm({...form,openTime:e.target.value})} /></div>
+          <span style={{paddingBottom:10,color:C.gray,fontWeight:700}}>→</span>
+          <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Closes</label><input style={inp} value={form.closeTime} onChange={e=>setForm({...form,closeTime:e.target.value})} /></div>
+        </div>
+      </div>
+
+      {/* Restaurant details */}
+      <div style={{...card,marginBottom:16}}>
+        <h3 style={{fontWeight:800,marginBottom:14}}>🏪 Restaurant Details</h3>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+          {[['Restaurant Name','name'],['Phone','phone'],['Address','address'],['Cuisine Type','cuisineType']].map(([l,k])=>(
+            <div key={k}><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>{l}</label><input style={inp} value={form[k]} onChange={e=>setForm({...form,[k]:e.target.value})} /></div>
+          ))}
+        </div>
+        <div style={{marginTop:14}}><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Description</label><textarea style={{...inp,height:90,resize:'vertical'}} value={form.description} onChange={e=>setForm({...form,description:e.target.value})} /></div>
+      </div>
+
+      {/* ── LOCATION SECTION ── */}
+      <div style={{...card,marginBottom:16,borderTop:`3px solid ${C.primary}`}}>
+        <h3 style={{fontWeight:800,marginBottom:4}}>📍 Restaurant Location</h3>
+        <p style={{color:C.gray,fontSize:13,marginBottom:16}}>
+          This is used by riders to navigate to your restaurant. Search your address to pin your exact location.
+        </p>
+
+        <LocationPicker
+          value={location}
+          onChange={setLocation}
+          label="Search and pin your restaurant location"
+        />
+
+        {/* Map preview */}
+        {location?.lat && (
+          <div style={{marginTop:16,borderRadius:12,overflow:'hidden',border:`1px solid ${C.border}`}}>
+            <iframe
+              title="Restaurant location preview"
+              width="100%"
+              height="220"
+              style={{border:'none',display:'block'}}
+              src={`https://www.openstreetmap.org/export/embed.html?bbox=${location.lng-0.005},${location.lat-0.005},${location.lng+0.005},${location.lat+0.005}&layer=mapnik&marker=${location.lat},${location.lng}`}
+            />
+            <div style={{background:C.bg,padding:'10px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <div style={{fontSize:12,color:C.gray}}>
+                📍 {location.lat.toFixed(5)}, {location.lng.toFixed(5)}
+              </div>
+              <a href={`https://www.google.com/maps?q=${location.lat},${location.lng}`} target="_blank" rel="noreferrer"
+                style={{color:C.primary,fontSize:12,fontWeight:700,textDecoration:'none'}}>
+                Open in Google Maps →
+              </a>
+            </div>
+          </div>
+        )}
+
+        <div style={{marginTop:12,fontSize:12,color:C.gray,background:C.bg,borderRadius:8,padding:10}}>
+          💡 After setting your location, click <strong>Save Changes</strong> at the top to apply it.
+        </div>
+      </div>
+
+      {/* Bank details */}
+      <div style={{...card,borderTop:`3px solid ${C.success}`}}>
+        <h3 style={{fontWeight:800,marginBottom:4}}>🏦 Bank Details for Withdrawals</h3>
+        <p style={{color:C.gray,fontSize:13,marginBottom:16}}>Required to receive withdrawal payments via Paystack</p>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14}}>
+          <div>
+            <label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Bank Name</label>
+            <select style={{...inp,cursor:'pointer',background:'#fff',height:44}} value={bankForm.bankName} onChange={e=>{ const s=NIGERIAN_BANKS.find(b=>b.name===e.target.value); setBankForm({...bankForm,bankName:e.target.value,bankCode:s?.code||''}); }}>
+              <option value="">Select your bank...</option>
+              {NIGERIAN_BANKS.map(bank=>(<option key={bank.code} value={bank.name}>{bank.name}</option>))}
+            </select>
+          </div>
+          <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Account Number</label><input style={inp} placeholder="10-digit number" maxLength={10} value={bankForm.accountNumber} onChange={e=>setBankForm({...bankForm,accountNumber:e.target.value})} /></div>
+          <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Account Name</label><input style={inp} placeholder="As on bank records" value={bankForm.accountName} onChange={e=>setBankForm({...bankForm,accountName:e.target.value})} /></div>
+          <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Bank Code <span style={{color:C.success,fontSize:11}}>(auto-filled)</span></label><input style={{...inp,background:'#f9fafb',color:C.gray}} value={bankForm.bankCode} readOnly /></div>
+        </div>
+        <button style={{...btn(C.success),padding:'10px 24px',fontSize:14}} onClick={saveBank} disabled={savingBank}>{savingBank?'Saving...':'✓ Save Bank Details'}</button>
+      </div>
     </div>
   );
 }
