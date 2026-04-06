@@ -108,190 +108,309 @@ function AuthProvider({children}) {
 }
 
 // ── LOCATION PICKER — Google Places + manual lat/lng fallback ─────────────────
-function LocationPicker({ value, onChange, label='Restaurant Location' }) {
-  const [query,       setQuery]       = useState('');
-  const [suggestions, setSuggestions] = useState([]);
-  const [searching,   setSearching]   = useState(false);
-  const [manualMode,  setManualMode]  = useState(false);
-  const [manualLat,   setManualLat]   = useState('');
-  const [manualLng,   setManualLng]   = useState('');
-  const [gmapsReady,  setGmapsReady]  = useState(false);
-  const [embedUrl,    setEmbedUrl]    = useState('');
-  const svcRef      = useRef(null);
-  const tokenRef    = useRef(null);
-  const debounceRef = useRef(null);
+// ── REPLACE the LocationPicker function in restaurant-web/src/App.js ──────────
 
+function LocationPicker({ value, onChange, label = 'Restaurant Location' }) {
+  const [gmapsReady, setGmapsReady]   = useState(false);
+  const [searching,  setSearching]    = useState(false);
+  const [query,      setQuery]        = useState('');
+  const [suggestions, setSuggestions] = useState([]);
+  const [manualLat,  setManualLat]    = useState('');
+  const [manualLng,  setManualLng]    = useState('');
+  const [showManual, setShowManual]   = useState(false);
+
+  const mapRef       = useRef(null); // DOM element
+  const mapObjRef    = useRef(null); // google.maps.Map instance
+  const markerRef    = useRef(null); // google.maps.Marker instance
+  const svcRef       = useRef(null); // AutocompleteService
+  const tokenRef     = useRef(null);
+  const debounceRef  = useRef(null);
+
+  // Load Google Maps script
   useEffect(() => { loadGoogleMaps(() => setGmapsReady(true)); }, []);
 
+  // Init map once Google is ready and DOM element exists
   useEffect(() => {
-    if (value?.address && !query) setQuery(value.address);
-    if (value?.lat) setEmbedUrl(`https://www.google.com/maps/embed/v1/place?key=${GMAPS_KEY}&q=${value.lat},${value.lng}&zoom=16`);
-  }, [value?.address, value?.lat]);
+    if (!gmapsReady || !mapRef.current) return;
 
-  useEffect(() => {
-    if (!gmapsReady) return;
+    const center = value?.lat
+      ? { lat: value.lat, lng: value.lng }
+      : { lat: 6.3350, lng: 5.6037 }; // Benin City
+
+    const map = new window.google.maps.Map(mapRef.current, {
+      center,
+      zoom: value?.lat ? 17 : 13,
+      mapTypeControl: false,
+      streetViewControl: false,
+      fullscreenControl: false,
+      zoomControlOptions: { position: window.google.maps.ControlPosition.RIGHT_CENTER },
+    });
+    mapObjRef.current = map;
+
+    // Place existing marker if value already set
+    if (value?.lat) {
+      markerRef.current = new window.google.maps.Marker({
+        position: center,
+        map,
+        draggable: true,
+        animation: window.google.maps.Animation.DROP,
+        title: 'Drag to adjust',
+      });
+      attachMarkerDrag(markerRef.current);
+    }
+
+    // Click map to place / move marker
+    map.addListener('click', (e) => {
+      const lat = e.latLng.lat();
+      const lng = e.latLng.lng();
+      placeMarker(map, { lat, lng });
+      reverseGeocode(lat, lng);
+    });
+
+    // Init autocomplete service
     svcRef.current   = new window.google.maps.places.AutocompleteService();
     tokenRef.current = new window.google.maps.places.AutocompleteSessionToken();
   }, [gmapsReady]);
 
-  const searchPlaces = q => {
-    if (!q || q.length < 2 || !svcRef.current) { setSuggestions([]); return; }
-    setSearching(true);
-    svcRef.current.getPlacePredictions(
-      { input:q, componentRestrictions:{ country:'ng' }, sessionToken:tokenRef.current,
-        location: new window.google.maps.LatLng(6.3350, 5.6037), radius:60000 },
-      (preds, status) => {
-        setSearching(false);
-        setSuggestions(status==='OK' && preds ? preds : []);
+  // When value changes externally, sync map
+  useEffect(() => {
+    if (!mapObjRef.current || !value?.lat) return;
+    const pos = { lat: value.lat, lng: value.lng };
+    mapObjRef.current.panTo(pos);
+    mapObjRef.current.setZoom(17);
+    placeMarker(mapObjRef.current, pos);
+  }, [value?.lat, value?.lng]);
+
+  const placeMarker = (map, pos) => {
+    if (markerRef.current) {
+      markerRef.current.setPosition(pos);
+    } else {
+      markerRef.current = new window.google.maps.Marker({
+        position: pos,
+        map,
+        draggable: true,
+        animation: window.google.maps.Animation.DROP,
+        title: 'Drag to fine-tune',
+      });
+      attachMarkerDrag(markerRef.current);
+    }
+  };
+
+  const attachMarkerDrag = (marker) => {
+    marker.addListener('dragend', (e) => {
+      const lat = e.latLng.lat();
+      const lng = e.latLng.lng();
+      reverseGeocode(lat, lng);
+    });
+  };
+
+  const reverseGeocode = (lat, lng) => {
+    new window.google.maps.Geocoder().geocode(
+      { location: { lat, lng } },
+      (results, status) => {
+        const addr = status === 'OK' && results[0]
+          ? results[0].formatted_address
+          : `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+        setQuery(addr);
+        onChange({ lat, lng, address: addr });
       }
     );
   };
 
-  const handleInput = e => {
-    const q = e.target.value; setQuery(q);
+  // Search autocomplete
+  const handleSearch = (e) => {
+    const q = e.target.value;
+    setQuery(q);
     clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => searchPlaces(q), 350);
+    if (!q || q.length < 2) { setSuggestions([]); return; }
+    debounceRef.current = setTimeout(() => {
+      if (!svcRef.current) return;
+      setSearching(true);
+      svcRef.current.getPlacePredictions(
+        { input: q, componentRestrictions: { country: 'ng' },
+          sessionToken: tokenRef.current,
+          location: new window.google.maps.LatLng(6.3350, 5.6037),
+          radius: 60000 },
+        (preds, status) => {
+          setSearching(false);
+          setSuggestions(status === 'OK' && preds ? preds : []);
+        }
+      );
+    }, 350);
   };
 
-  const pickSuggestion = pred => {
-    setSuggestions([]); setQuery(pred.description); setSearching(true);
-    new window.google.maps.Geocoder().geocode({ placeId:pred.place_id }, (results, status) => {
-      setSearching(false);
-      if (status==='OK' && results[0]) {
-        const loc  = results[0].geometry.location;
-        const lat  = loc.lat(); const lng = loc.lng();
-        const addr = results[0].formatted_address;
-        setEmbedUrl(`https://www.google.com/maps/embed/v1/place?key=${GMAPS_KEY}&q=${lat},${lng}&zoom=16`);
-        tokenRef.current = new window.google.maps.places.AutocompleteSessionToken();
-        onChange({ lat, lng, address:addr });
+  const pickSuggestion = (pred) => {
+    setSuggestions([]);
+    setSearching(true);
+    new window.google.maps.Geocoder().geocode(
+      { placeId: pred.place_id },
+      (results, status) => {
+        setSearching(false);
+        if (status === 'OK' && results[0]) {
+          const loc  = results[0].geometry.location;
+          const lat  = loc.lat(); const lng = loc.lng();
+          const addr = results[0].formatted_address;
+          setQuery(addr);
+          tokenRef.current = new window.google.maps.places.AutocompleteSessionToken();
+          if (mapObjRef.current) {
+            mapObjRef.current.panTo({ lat, lng });
+            mapObjRef.current.setZoom(17);
+            placeMarker(mapObjRef.current, { lat, lng });
+          }
+          onChange({ lat, lng, address: addr });
+        }
       }
-    });
+    );
   };
 
   const applyManual = () => {
     const lat = parseFloat(manualLat); const lng = parseFloat(manualLng);
-    if (isNaN(lat)||isNaN(lng)) return alert('Please enter valid numbers');
-    if (lat<4||lat>14||lng<2||lng>15) return alert('Coordinates look wrong for Nigeria. Double-check and try again.');
-    const addr = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-    setQuery(addr);
-    setEmbedUrl(`https://www.google.com/maps/embed/v1/place?key=${GMAPS_KEY}&q=${lat},${lng}&zoom=16`);
-    onChange({ lat, lng, address:addr });
-    setManualMode(false);
+    if (isNaN(lat) || isNaN(lng)) return alert('Please enter valid numbers');
+    if (lat < 4 || lat > 14 || lng < 2 || lng > 15)
+      return alert('Coordinates look wrong for Nigeria. Double-check and try again.');
+    if (mapObjRef.current) {
+      mapObjRef.current.panTo({ lat, lng });
+      mapObjRef.current.setZoom(17);
+      placeMarker(mapObjRef.current, { lat, lng });
+    }
+    reverseGeocode(lat, lng);
+    setShowManual(false);
   };
 
-  const clear = () => { setQuery(''); setSuggestions([]); setManualLat(''); setManualLng(''); setEmbedUrl(''); onChange(null); };
+  const clear = () => {
+    setQuery(''); setSuggestions([]);
+    setManualLat(''); setManualLng('');
+    if (markerRef.current) { markerRef.current.setMap(null); markerRef.current = null; }
+    if (mapObjRef.current) mapObjRef.current.setZoom(13);
+    onChange(null);
+  };
 
   return (
-    <div style={{ position:'relative' }}>
-      <label style={{ fontSize:13, fontWeight:600, display:'block', marginBottom:6 }}>{label}</label>
+    <div>
+      <label style={{ fontSize:13, fontWeight:600, display:'block', marginBottom:8 }}>{label}</label>
 
-      {/* ── Google Search mode ── */}
-      {!manualMode && (
-        <>
-          <div style={{ position:'relative' }}>
+      {/* Search box */}
+      <div style={{ position:'relative', marginBottom:8 }}>
+        <div style={{ display:'flex', gap:8 }}>
+          <div style={{ position:'relative', flex:1 }}>
             <input
-              style={{ ...inp, paddingRight:38, borderColor:value?.lat ? C.success : C.border }}
-              placeholder={gmapsReady ? 'Search your restaurant address...' : 'Loading Google Maps...'}
+              style={{ ...inp, paddingRight:36, borderColor: value?.lat ? C.success : C.border }}
+              placeholder={gmapsReady ? '🔍 Search address or click on map below...' : 'Loading map...'}
               value={query}
-              onChange={handleInput}
+              onChange={handleSearch}
               disabled={!gmapsReady}
             />
-            {searching && <div style={{ position:'absolute', right:12, top:'50%', transform:'translateY(-50%)', color:C.gray, fontSize:13 }}>⏳</div>}
+            {searching && (
+              <div style={{ position:'absolute', right:10, top:'50%', transform:'translateY(-50%)', fontSize:12, color:C.gray }}>⏳</div>
+            )}
             {value?.lat && !searching && (
               <button onClick={clear} style={{ position:'absolute', right:10, top:'50%', transform:'translateY(-50%)', background:'none', border:'none', cursor:'pointer', color:C.gray, fontSize:17 }}>✕</button>
             )}
           </div>
+          <button
+            onClick={() => setShowManual(!showManual)}
+            style={{ ...btn(showManual ? C.warning : '#f5f5f5'), color: showManual ? '#fff' : C.gray, flexShrink:0, fontSize:12, padding:'9px 14px', whiteSpace:'nowrap' }}
+          >
+            📐 Lat/Lng
+          </button>
+        </div>
 
-          {/* Suggestions */}
-          {suggestions.length > 0 && (
-            <div style={{ position:'absolute', top:'100%', left:0, right:0, background:'#fff', border:`1px solid ${C.border}`, borderRadius:10, boxShadow:'0 8px 24px rgba(0,0,0,0.12)', zIndex:300, maxHeight:240, overflowY:'auto', marginTop:4 }}>
-              {suggestions.map((p, i) => (
-                <div key={p.place_id} onClick={() => pickSuggestion(p)}
-                  style={{ padding:'11px 14px', cursor:'pointer', borderBottom:i<suggestions.length-1?`1px solid ${C.border}`:'none', fontSize:13, lineHeight:1.4 }}
-                  onMouseEnter={e => e.currentTarget.style.background='#FFF7ED'}
-                  onMouseLeave={e => e.currentTarget.style.background='#fff'}
-                >
-                  <span style={{ marginRight:8 }}>📍</span>
-                  <strong>{p.structured_formatting?.main_text}</strong>
-                  {p.structured_formatting?.secondary_text && <span style={{ color:C.gray }}> · {p.structured_formatting.secondary_text}</span>}
-                </div>
-              ))}
-              {/* Required Google attribution */}
-              <div style={{ padding:'6px 14px', display:'flex', justifyContent:'flex-end', borderTop:`1px solid ${C.border}` }}>
-                <img src="https://developers.google.com/static/maps/documentation/images/google_on_white.png" alt="Google" style={{ height:14 }} />
+        {/* Search suggestions dropdown */}
+        {suggestions.length > 0 && (
+          <div style={{ position:'absolute', top:'100%', left:0, right:48, background:'#fff', border:`1px solid ${C.border}`, borderRadius:10, boxShadow:'0 8px 24px rgba(0,0,0,0.12)', zIndex:400, maxHeight:220, overflowY:'auto', marginTop:4 }}>
+            {suggestions.map((p, i) => (
+              <div key={p.place_id} onClick={() => pickSuggestion(p)}
+                style={{ padding:'11px 14px', cursor:'pointer', borderBottom:i<suggestions.length-1?`1px solid ${C.border}`:'none', fontSize:13, lineHeight:1.4 }}
+                onMouseEnter={e => e.currentTarget.style.background='#FFF7ED'}
+                onMouseLeave={e => e.currentTarget.style.background='#fff'}
+              >
+                <span style={{ marginRight:8 }}>📍</span>
+                <strong>{p.structured_formatting?.main_text}</strong>
+                {p.structured_formatting?.secondary_text && <span style={{ color:C.gray }}> · {p.structured_formatting.secondary_text}</span>}
               </div>
+            ))}
+            <div style={{ padding:'6px 14px', display:'flex', justifyContent:'flex-end', borderTop:`1px solid ${C.border}` }}>
+              <img src="https://developers.google.com/static/maps/documentation/images/google_on_white.png" alt="Google" style={{ height:14 }} />
             </div>
-          )}
+          </div>
+        )}
+      </div>
 
-          <div style={{ marginTop:8, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-            <div style={{ fontSize:11, color:C.gray }}>💡 Search your street name, area or landmark</div>
-            <button onClick={() => setManualMode(true)}
-              style={{ background:'none', border:'none', cursor:'pointer', color:C.primary, fontSize:11, fontWeight:700, textDecoration:'underline', padding:0 }}>
-              Can't find it? Enter lat/lng →
-            </button>
+      {/* Manual lat/lng panel */}
+      {showManual && (
+        <div style={{ background:'#FFF7ED', borderRadius:10, padding:14, marginBottom:8, border:`1px solid #FED7AA` }}>
+          <div style={{ fontSize:12, color:'#92400E', fontWeight:700, marginBottom:10 }}>
+            📐 Enter coordinates manually
+            <span style={{ fontWeight:400, marginLeft:6 }}>— from Google Maps: right-click → copy the numbers at the top</span>
           </div>
-        </>
-      )}
-
-      {/* ── Manual lat/lng mode ── */}
-      {manualMode && (
-        <div style={{ background:'#FFF7ED', borderRadius:12, padding:16, border:`1px solid #FED7AA` }}>
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
-            <div style={{ fontWeight:700, fontSize:14, color:'#92400E' }}>📍 Enter Coordinates Manually</div>
-            <button onClick={() => setManualMode(false)} style={{ background:'none', border:'none', cursor:'pointer', color:C.gray, fontSize:12 }}>← Back to search</button>
-          </div>
-          <div style={{ background:'#FEF3C7', borderRadius:8, padding:12, marginBottom:14, border:`1px solid #FDE68A`, fontSize:12, color:'#B45309', lineHeight:1.8 }}>
-            <strong style={{ color:'#92400E' }}>How to get coordinates from Google Maps:</strong><br/>
-            1. Open <a href="https://maps.google.com" target="_blank" rel="noreferrer" style={{ color:C.primary, fontWeight:700 }}>maps.google.com</a><br/>
-            2. Search your restaurant address<br/>
-            3. Right-click the exact location → click the coordinates at the top of the menu<br/>
-            4. They get copied — paste below (e.g. <strong>6.33450, 5.62710</strong>)<br/>
-            5. First number = Latitude · Second = Longitude
-          </div>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:14 }}>
-            <div>
-              <label style={{ fontSize:12, fontWeight:700, color:'#92400E', display:'block', marginBottom:6 }}>LATITUDE</label>
-              <input style={{ ...inp, borderColor:manualLat&&!isNaN(parseFloat(manualLat))?C.success:C.border }}
+          <div style={{ display:'flex', gap:10, alignItems:'flex-end' }}>
+            <div style={{ flex:1 }}>
+              <label style={{ fontSize:11, fontWeight:700, color:'#92400E', display:'block', marginBottom:4 }}>LATITUDE</label>
+              <input style={{ ...inp, borderColor:manualLat&&!isNaN(parseFloat(manualLat))?C.success:C.border, fontSize:13 }}
                 placeholder="e.g. 6.33450" value={manualLat} onChange={e=>setManualLat(e.target.value)} />
             </div>
-            <div>
-              <label style={{ fontSize:12, fontWeight:700, color:'#92400E', display:'block', marginBottom:6 }}>LONGITUDE</label>
-              <input style={{ ...inp, borderColor:manualLng&&!isNaN(parseFloat(manualLng))?C.success:C.border }}
+            <div style={{ flex:1 }}>
+              <label style={{ fontSize:11, fontWeight:700, color:'#92400E', display:'block', marginBottom:4 }}>LONGITUDE</label>
+              <input style={{ ...inp, borderColor:manualLng&&!isNaN(parseFloat(manualLng))?C.success:C.border, fontSize:13 }}
                 placeholder="e.g. 5.62710" value={manualLng} onChange={e=>setManualLng(e.target.value)} />
             </div>
+            <button
+              onClick={applyManual}
+              style={{ ...btn(manualLat&&manualLng?C.primary:'#ccc'), padding:'10px 16px', flexShrink:0 }}
+              disabled={!manualLat||!manualLng}
+            >
+              Go →
+            </button>
           </div>
-          <button onClick={applyManual}
-            style={{ ...btn(manualLat&&manualLng?C.primary:'#ccc'), width:'100%', padding:'10px 0', fontSize:14 }}
-            disabled={!manualLat||!manualLng}>
-            ✓ Use These Coordinates
-          </button>
         </div>
       )}
 
-      {/* ── Confirmed: map preview ── */}
-      {value?.lat && (
-        <div style={{ marginTop:12, borderRadius:12, overflow:'hidden', border:`1px solid ${C.border}` }}>
-          <iframe
-            title="Location preview"
-            width="100%" height="220"
-            style={{ border:'none', display:'block' }}
-            src={embedUrl}
-            allowFullScreen loading="lazy"
-            referrerPolicy="no-referrer-when-downgrade"
-          />
-          <div style={{ background:C.bg, padding:'10px 14px', display:'flex', alignItems:'center', justifyContent:'space-between', borderTop:`1px solid ${C.border}` }}>
-            <div>
-              <div style={{ fontSize:12, fontWeight:700, color:C.success }}>✅ Location confirmed</div>
-              <div style={{ fontSize:11, color:C.gray, marginTop:2 }}>{value.lat.toFixed(5)}, {value.lng.toFixed(5)}</div>
-            </div>
-            <div style={{ display:'flex', gap:8 }}>
-              <button onClick={clear} style={{ ...btn('#fff'), color:C.error, border:`1px solid ${C.error}`, fontSize:12, padding:'5px 12px' }}>✕ Clear</button>
-              <a href={`https://www.google.com/maps?q=${value.lat},${value.lng}`} target="_blank" rel="noreferrer"
-                style={{ ...btn(C.primary), fontSize:12, padding:'5px 12px', textDecoration:'none', display:'inline-block' }}>
-                Open in Maps →
-              </a>
-            </div>
+      {/* ── INTERACTIVE MAP ── */}
+      <div style={{ position:'relative', borderRadius:12, overflow:'hidden', border:`2px solid ${value?.lat ? C.success : C.border}` }}>
+        {/* Map renders here */}
+        <div ref={mapRef} style={{ width:'100%', height:300 }} />
+
+        {/* Loading overlay */}
+        {!gmapsReady && (
+          <div style={{ position:'absolute', inset:0, background:'#f5f5f5', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:10 }}>
+            <div style={{ fontSize:32 }}>🗺️</div>
+            <div style={{ color:C.gray, fontSize:13, fontWeight:600 }}>Loading Google Maps...</div>
           </div>
+        )}
+
+        {/* Hint overlay — shown until first pin is placed */}
+        {gmapsReady && !value?.lat && (
+          <div style={{ position:'absolute', bottom:12, left:'50%', transform:'translateX(-50%)', background:'rgba(0,0,0,0.65)', color:'#fff', fontSize:12, fontWeight:600, padding:'7px 14px', borderRadius:20, pointerEvents:'none', whiteSpace:'nowrap' }}>
+            👆 Click anywhere on the map to pin your location
+          </div>
+        )}
+
+        {/* Confirmed badge */}
+        {value?.lat && (
+          <div style={{ position:'absolute', top:10, left:10, background:'rgba(34,197,94,0.92)', color:'#fff', fontSize:11, fontWeight:700, padding:'5px 10px', borderRadius:20, backdropFilter:'blur(4px)' }}>
+            ✅ Location pinned — drag marker to adjust
+          </div>
+        )}
+      </div>
+
+      {/* Coordinates + actions row */}
+      {value?.lat && (
+        <div style={{ marginTop:8, display:'flex', alignItems:'center', justifyContent:'space-between', background:'#F0FDF4', borderRadius:10, padding:'10px 14px', border:`1px solid #BBF7D0` }}>
+          <div>
+            <div style={{ fontSize:12, fontWeight:700, color:C.success }}>📍 {value.lat.toFixed(5)}, {value.lng.toFixed(5)}</div>
+            {value.address && <div style={{ fontSize:11, color:C.gray, marginTop:2, maxWidth:320 }} title={value.address}>{value.address.length>60 ? value.address.slice(0,60)+'…' : value.address}</div>}
+          </div>
+          <a href={`https://www.google.com/maps?q=${value.lat},${value.lng}`} target="_blank" rel="noreferrer"
+            style={{ ...btn(C.primary), fontSize:11, padding:'5px 12px', textDecoration:'none', display:'inline-block', flexShrink:0 }}>
+            Open in Maps →
+          </a>
+        </div>
+      )}
+
+      {/* Helper */}
+      {!value?.lat && (
+        <div style={{ fontSize:11, color:C.gray, marginTop:6 }}>
+          💡 Search above, click on the map, or use the Lat/Lng button to enter coordinates directly
         </div>
       )}
     </div>
