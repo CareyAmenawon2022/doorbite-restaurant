@@ -7,21 +7,21 @@ const SOCKET = 'https://api.doorbite.ng';
 
 const CLOUD_NAME    = 'du34xyidb';
 const UPLOAD_PRESET = 'quicky';
+const GMAPS_KEY     = 'AIzaSyB8rat9sk3rTSvGiZvVl-vIbJiqt85Hcrs';
 
 const api = axios.create({ baseURL: API });
 api.interceptors.request.use(c => { const t=localStorage.getItem('r_token'); if(t) c.headers.Authorization=`Bearer ${t}`; return c; });
 
-const C = { primary:'#FF6B2C', dark:'#1A1A1A', white:'#fff', bg:'#F8F8F8', border:'#E8E8E8', gray:'#888', success:'#22C55E', error:'#EF4444', warning:'#F59E0B' };
+const C   = { primary:'#FF6B2C', dark:'#1A1A1A', white:'#fff', bg:'#F8F8F8', border:'#E8E8E8', gray:'#888', success:'#22C55E', error:'#EF4444', warning:'#F59E0B' };
 const card = { background:'#fff', borderRadius:16, padding:20, boxShadow:'0 2px 8px rgba(0,0,0,0.05)', marginBottom:14 };
 const btn  = (bg, color='#fff') => ({ background:bg, color, border:'none', padding:'9px 18px', borderRadius:10, cursor:'pointer', fontWeight:700, fontSize:13 });
 const inp  = { border:`1px solid ${C.border}`, borderRadius:10, padding:'10px 14px', fontSize:14, width:'100%', outline:'none', boxSizing:'border-box' };
 
-// ── CLOUDINARY UPLOAD ─────────────────────────────────────────────────────────
+// ── CLOUDINARY ────────────────────────────────────────────────────────────────
 async function uploadToCloudinary(file) {
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('upload_preset', UPLOAD_PRESET);
-  const res  = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, { method:'POST', body:formData });
+  const fd = new FormData();
+  fd.append('file', file); fd.append('upload_preset', UPLOAD_PRESET);
+  const res  = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, { method:'POST', body:fd });
   const data = await res.json();
   if (data.secure_url) return data.secure_url;
   throw new Error(data.error?.message || 'Upload failed');
@@ -34,44 +34,52 @@ const originalTitle  = document.title;
 function playOrderSound() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    [0, 0.25, 0.5].forEach(startOffset => {
-      const osc = ctx.createOscillator(); const gain = ctx.createGain();
-      osc.connect(gain); gain.connect(ctx.destination);
+    [0, 0.25, 0.5].forEach(o => {
+      const osc = ctx.createOscillator(); const g = ctx.createGain();
+      osc.connect(g); g.connect(ctx.destination);
       osc.frequency.value = 880; osc.type = 'sine';
-      gain.gain.setValueAtTime(0.8, ctx.currentTime + startOffset);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + startOffset + 0.2);
-      osc.start(ctx.currentTime + startOffset); osc.stop(ctx.currentTime + startOffset + 0.25);
+      g.gain.setValueAtTime(0.8, ctx.currentTime+o);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime+o+0.2);
+      osc.start(ctx.currentTime+o); osc.stop(ctx.currentTime+o+0.25);
     });
   } catch {}
 }
-
-function flashTabTitle(orderCode) {
+function flashTabTitle(code) {
   if (tabFlashInterval) clearInterval(tabFlashInterval);
   let on = true;
-  tabFlashInterval = setInterval(() => { document.title = on ? `🔔 NEW ORDER #${orderCode}!` : originalTitle; on = !on; }, 800);
-  setTimeout(() => { if (tabFlashInterval) clearInterval(tabFlashInterval); document.title = originalTitle; }, 30000);
+  tabFlashInterval = setInterval(() => { document.title = on ? `🔔 NEW ORDER #${code}!` : originalTitle; on=!on; }, 800);
+  setTimeout(() => { clearInterval(tabFlashInterval); document.title=originalTitle; }, 30000);
 }
-
-function stopTabFlash() { if (tabFlashInterval) clearInterval(tabFlashInterval); document.title = originalTitle; }
-
+function stopTabFlash() { clearInterval(tabFlashInterval); document.title=originalTitle; }
 async function showBrowserNotification(order) {
   try {
     if (!('Notification' in window)) return;
-    if (Notification.permission === 'default') await Notification.requestPermission();
-    if (Notification.permission === 'granted') {
-      const n = new Notification('🍽️ New Order!', {
-        body: `#${order.orderCode} — ${order.items?.map(i=>`${i.name} ×${i.quantity}`).join(', ')} — ₦${order.total?.toLocaleString()}`,
-        icon: '/favicon.ico', badge: '/favicon.ico', tag: `order-${order._id}`, requireInteraction: true,
-      });
+    if (Notification.permission==='default') await Notification.requestPermission();
+    if (Notification.permission==='granted') {
+      const n = new Notification('🍽️ New Order!', { body:`#${order.orderCode} — ₦${order.total?.toLocaleString()}`, icon:'/favicon.ico', tag:`order-${order._id}`, requireInteraction:true });
       n.onclick = () => { window.focus(); n.close(); };
     }
   } catch {}
 }
-
 function fireNewOrderAlert(order) { playOrderSound(); flashTabTitle(order.orderCode); showBrowserNotification(order); }
+if ('Notification' in window && Notification.permission==='default') {
+  window.addEventListener('click', function askOnce() { Notification.requestPermission(); window.removeEventListener('click', askOnce); }, { once:true });
+}
 
-if ('Notification' in window && Notification.permission === 'default') {
-  window.addEventListener('click', function askOnce() { Notification.requestPermission(); window.removeEventListener('click', askOnce); }, { once: true });
+// ── GOOGLE MAPS LOADER ────────────────────────────────────────────────────────
+let gmapsLoaded   = false;
+let gmapsLoading  = false;
+let gmapsCbs      = [];
+function loadGoogleMaps(cb) {
+  if (gmapsLoaded) { cb(); return; }
+  gmapsCbs.push(cb);
+  if (gmapsLoading) return;
+  gmapsLoading = true;
+  const s = document.createElement('script');
+  s.src   = `https://maps.googleapis.com/maps/api/js?key=${GMAPS_KEY}&libraries=places`;
+  s.async = true; s.defer = true;
+  s.onload = () => { gmapsLoaded=true; gmapsCbs.forEach(f=>f()); gmapsCbs=[]; };
+  document.head.appendChild(s);
 }
 
 const NIGERIAN_BANKS = [
@@ -85,11 +93,10 @@ const NIGERIAN_BANKS = [
   {name:'Titan Trust Bank',code:'102'},{name:'Union Bank of Nigeria',code:'032'},{name:'United Bank for Africa (UBA)',code:'033'},
   {name:'Unity Bank',code:'215'},{name:'Wema Bank',code:'035'},{name:'Zenith Bank',code:'057'},
 ];
-
 const CUISINES = ['Nigerian','Continental','Chinese','Indian','Italian','Fast Food','Seafood','Vegetarian','Grills & BBQ','Pastries & Bakery','Pizza','Burgers'];
 
-const AuthCtx  = createContext(null);
-const useAuth  = () => useContext(AuthCtx);
+const AuthCtx = createContext(null);
+const useAuth = () => useContext(AuthCtx);
 
 function AuthProvider({children}) {
   const [user,setUser]=useState(null); const [restaurant,setRestaurant]=useState(null); const [loading,setLoading]=useState(true);
@@ -100,115 +107,191 @@ function AuthProvider({children}) {
   return <AuthCtx.Provider value={{user,restaurant,setRestaurant,login,logout}}>{children}</AuthCtx.Provider>;
 }
 
-// ── LOCATION PICKER COMPONENT — reused in Register + Settings ─────────────────
-function LocationPicker({ value, onChange, label = 'Restaurant Location' }) {
-  const [query, setQuery]           = useState('');
+// ── LOCATION PICKER — Google Places + manual lat/lng fallback ─────────────────
+function LocationPicker({ value, onChange, label='Restaurant Location' }) {
+  const [query,       setQuery]       = useState('');
   const [suggestions, setSuggestions] = useState([]);
-  const [searching, setSearching]   = useState(false);
-  const debounceRef                 = useRef(null);
+  const [searching,   setSearching]   = useState(false);
+  const [manualMode,  setManualMode]  = useState(false);
+  const [manualLat,   setManualLat]   = useState('');
+  const [manualLng,   setManualLng]   = useState('');
+  const [gmapsReady,  setGmapsReady]  = useState(false);
+  const [embedUrl,    setEmbedUrl]    = useState('');
+  const svcRef      = useRef(null);
+  const tokenRef    = useRef(null);
+  const debounceRef = useRef(null);
 
-  // Populate input when value already exists
+  useEffect(() => { loadGoogleMaps(() => setGmapsReady(true)); }, []);
+
   useEffect(() => {
     if (value?.address && !query) setQuery(value.address);
-  }, [value?.address]);
+    if (value?.lat) setEmbedUrl(`https://www.google.com/maps/embed/v1/place?key=${GMAPS_KEY}&q=${value.lat},${value.lng}&zoom=16`);
+  }, [value?.address, value?.lat]);
 
-  const search = async (q) => {
-    if (!q || q.length < 3) { setSuggestions([]); return; }
+  useEffect(() => {
+    if (!gmapsReady) return;
+    svcRef.current   = new window.google.maps.places.AutocompleteService();
+    tokenRef.current = new window.google.maps.places.AutocompleteSessionToken();
+  }, [gmapsReady]);
+
+  const searchPlaces = q => {
+    if (!q || q.length < 2 || !svcRef.current) { setSuggestions([]); return; }
     setSearching(true);
-    try {
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q + ' Benin City Nigeria')}&format=json&limit=6&addressdetails=1`,
-        { headers: { 'Accept-Language': 'en' } }
-      );
-      const data = await res.json();
-      setSuggestions(data);
-    } catch {}
-    finally { setSearching(false); }
+    svcRef.current.getPlacePredictions(
+      { input:q, componentRestrictions:{ country:'ng' }, sessionToken:tokenRef.current,
+        location: new window.google.maps.LatLng(6.3350, 5.6037), radius:60000 },
+      (preds, status) => {
+        setSearching(false);
+        setSuggestions(status==='OK' && preds ? preds : []);
+      }
+    );
   };
 
-  const handleInput = (e) => {
-    const q = e.target.value;
-    setQuery(q);
+  const handleInput = e => {
+    const q = e.target.value; setQuery(q);
     clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => search(q), 400);
+    debounceRef.current = setTimeout(() => searchPlaces(q), 350);
   };
 
-  const pick = (place) => {
-    const lat  = parseFloat(place.lat);
-    const lng  = parseFloat(place.lon);
-    const addr = place.display_name;
+  const pickSuggestion = pred => {
+    setSuggestions([]); setQuery(pred.description); setSearching(true);
+    new window.google.maps.Geocoder().geocode({ placeId:pred.place_id }, (results, status) => {
+      setSearching(false);
+      if (status==='OK' && results[0]) {
+        const loc  = results[0].geometry.location;
+        const lat  = loc.lat(); const lng = loc.lng();
+        const addr = results[0].formatted_address;
+        setEmbedUrl(`https://www.google.com/maps/embed/v1/place?key=${GMAPS_KEY}&q=${lat},${lng}&zoom=16`);
+        tokenRef.current = new window.google.maps.places.AutocompleteSessionToken();
+        onChange({ lat, lng, address:addr });
+      }
+    });
+  };
+
+  const applyManual = () => {
+    const lat = parseFloat(manualLat); const lng = parseFloat(manualLng);
+    if (isNaN(lat)||isNaN(lng)) return alert('Please enter valid numbers');
+    if (lat<4||lat>14||lng<2||lng>15) return alert('Coordinates look wrong for Nigeria. Double-check and try again.');
+    const addr = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
     setQuery(addr);
-    setSuggestions([]);
-    onChange({ lat, lng, address: addr });
+    setEmbedUrl(`https://www.google.com/maps/embed/v1/place?key=${GMAPS_KEY}&q=${lat},${lng}&zoom=16`);
+    onChange({ lat, lng, address:addr });
+    setManualMode(false);
   };
 
-  const clear = () => {
-    setQuery('');
-    setSuggestions([]);
-    onChange(null);
-  };
+  const clear = () => { setQuery(''); setSuggestions([]); setManualLat(''); setManualLng(''); setEmbedUrl(''); onChange(null); };
 
   return (
     <div style={{ position:'relative' }}>
-      <label style={{ fontSize:13, fontWeight:600, display:'block', marginBottom:6 }}>{label} *</label>
-      <div style={{ position:'relative' }}>
-        <input
-          style={{ ...inp, paddingRight:36, borderColor: value?.lat ? C.success : C.border }}
-          placeholder="Search your restaurant address in Benin City..."
-          value={query}
-          onChange={handleInput}
-        />
-        {searching && (
-          <div style={{ position:'absolute', right:10, top:'50%', transform:'translateY(-50%)', color:C.gray, fontSize:12 }}>⏳</div>
-        )}
-        {value?.lat && !searching && (
-          <button onClick={clear} style={{ position:'absolute', right:10, top:'50%', transform:'translateY(-50%)', background:'none', border:'none', cursor:'pointer', color:C.gray, fontSize:16 }}>✕</button>
-        )}
-      </div>
+      <label style={{ fontSize:13, fontWeight:600, display:'block', marginBottom:6 }}>{label}</label>
 
-      {/* Suggestions dropdown */}
-      {suggestions.length > 0 && (
-        <div style={{ position:'absolute', top:'100%', left:0, right:0, background:'#fff', border:`1px solid ${C.border}`, borderRadius:10, boxShadow:'0 8px 24px rgba(0,0,0,0.12)', zIndex:100, maxHeight:220, overflowY:'auto', marginTop:4 }}>
-          {suggestions.map((place, i) => (
-            <div key={place.place_id}
-              onClick={() => pick(place)}
-              style={{ padding:'10px 14px', cursor:'pointer', borderBottom: i < suggestions.length-1 ? `1px solid ${C.border}` : 'none', fontSize:13, lineHeight:1.4 }}
-              onMouseEnter={e => e.currentTarget.style.background = '#FFF7ED'}
-              onMouseLeave={e => e.currentTarget.style.background = '#fff'}
-            >
-              <span style={{ marginRight:8 }}>📍</span>
-              <strong>{place.address?.road || place.address?.suburb || place.name}</strong>
-              {place.address?.city && <span style={{ color:C.gray }}> · {place.address.city}</span>}
-              <div style={{ color:C.gray, fontSize:11, marginTop:2, marginLeft:22 }}>{place.display_name}</div>
+      {/* ── Google Search mode ── */}
+      {!manualMode && (
+        <>
+          <div style={{ position:'relative' }}>
+            <input
+              style={{ ...inp, paddingRight:38, borderColor:value?.lat ? C.success : C.border }}
+              placeholder={gmapsReady ? 'Search your restaurant address...' : 'Loading Google Maps...'}
+              value={query}
+              onChange={handleInput}
+              disabled={!gmapsReady}
+            />
+            {searching && <div style={{ position:'absolute', right:12, top:'50%', transform:'translateY(-50%)', color:C.gray, fontSize:13 }}>⏳</div>}
+            {value?.lat && !searching && (
+              <button onClick={clear} style={{ position:'absolute', right:10, top:'50%', transform:'translateY(-50%)', background:'none', border:'none', cursor:'pointer', color:C.gray, fontSize:17 }}>✕</button>
+            )}
+          </div>
+
+          {/* Suggestions */}
+          {suggestions.length > 0 && (
+            <div style={{ position:'absolute', top:'100%', left:0, right:0, background:'#fff', border:`1px solid ${C.border}`, borderRadius:10, boxShadow:'0 8px 24px rgba(0,0,0,0.12)', zIndex:300, maxHeight:240, overflowY:'auto', marginTop:4 }}>
+              {suggestions.map((p, i) => (
+                <div key={p.place_id} onClick={() => pickSuggestion(p)}
+                  style={{ padding:'11px 14px', cursor:'pointer', borderBottom:i<suggestions.length-1?`1px solid ${C.border}`:'none', fontSize:13, lineHeight:1.4 }}
+                  onMouseEnter={e => e.currentTarget.style.background='#FFF7ED'}
+                  onMouseLeave={e => e.currentTarget.style.background='#fff'}
+                >
+                  <span style={{ marginRight:8 }}>📍</span>
+                  <strong>{p.structured_formatting?.main_text}</strong>
+                  {p.structured_formatting?.secondary_text && <span style={{ color:C.gray }}> · {p.structured_formatting.secondary_text}</span>}
+                </div>
+              ))}
+              {/* Required Google attribution */}
+              <div style={{ padding:'6px 14px', display:'flex', justifyContent:'flex-end', borderTop:`1px solid ${C.border}` }}>
+                <img src="https://developers.google.com/static/maps/documentation/images/google_on_white.png" alt="Google" style={{ height:14 }} />
+              </div>
             </div>
-          ))}
-        </div>
+          )}
+
+          <div style={{ marginTop:8, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+            <div style={{ fontSize:11, color:C.gray }}>💡 Search your street name, area or landmark</div>
+            <button onClick={() => setManualMode(true)}
+              style={{ background:'none', border:'none', cursor:'pointer', color:C.primary, fontSize:11, fontWeight:700, textDecoration:'underline', padding:0 }}>
+              Can't find it? Enter lat/lng →
+            </button>
+          </div>
+        </>
       )}
 
-      {/* Confirmed location preview */}
-      {value?.lat && (
-        <div style={{ marginTop:8, background:'#F0FDF4', borderRadius:10, padding:'10px 14px', border:`1px solid #BBF7D0`, display:'flex', alignItems:'center', justifyContent:'space-between', gap:10 }}>
-          <div style={{ flex:1 }}>
-            <div style={{ fontSize:12, fontWeight:700, color:C.success, marginBottom:2 }}>✅ Location confirmed</div>
-            <div style={{ fontSize:11, color:C.gray }}>
-              {value.lat.toFixed(5)}, {value.lng.toFixed(5)}
+      {/* ── Manual lat/lng mode ── */}
+      {manualMode && (
+        <div style={{ background:'#FFF7ED', borderRadius:12, padding:16, border:`1px solid #FED7AA` }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+            <div style={{ fontWeight:700, fontSize:14, color:'#92400E' }}>📍 Enter Coordinates Manually</div>
+            <button onClick={() => setManualMode(false)} style={{ background:'none', border:'none', cursor:'pointer', color:C.gray, fontSize:12 }}>← Back to search</button>
+          </div>
+          <div style={{ background:'#FEF3C7', borderRadius:8, padding:12, marginBottom:14, border:`1px solid #FDE68A`, fontSize:12, color:'#B45309', lineHeight:1.8 }}>
+            <strong style={{ color:'#92400E' }}>How to get coordinates from Google Maps:</strong><br/>
+            1. Open <a href="https://maps.google.com" target="_blank" rel="noreferrer" style={{ color:C.primary, fontWeight:700 }}>maps.google.com</a><br/>
+            2. Search your restaurant address<br/>
+            3. Right-click the exact location → click the coordinates at the top of the menu<br/>
+            4. They get copied — paste below (e.g. <strong>6.33450, 5.62710</strong>)<br/>
+            5. First number = Latitude · Second = Longitude
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:14 }}>
+            <div>
+              <label style={{ fontSize:12, fontWeight:700, color:'#92400E', display:'block', marginBottom:6 }}>LATITUDE</label>
+              <input style={{ ...inp, borderColor:manualLat&&!isNaN(parseFloat(manualLat))?C.success:C.border }}
+                placeholder="e.g. 6.33450" value={manualLat} onChange={e=>setManualLat(e.target.value)} />
+            </div>
+            <div>
+              <label style={{ fontSize:12, fontWeight:700, color:'#92400E', display:'block', marginBottom:6 }}>LONGITUDE</label>
+              <input style={{ ...inp, borderColor:manualLng&&!isNaN(parseFloat(manualLng))?C.success:C.border }}
+                placeholder="e.g. 5.62710" value={manualLng} onChange={e=>setManualLng(e.target.value)} />
             </div>
           </div>
-          <a
-            href={`https://www.google.com/maps?q=${value.lat},${value.lng}`}
-            target="_blank"
-            rel="noreferrer"
-            style={{ color:C.primary, fontSize:12, fontWeight:700, textDecoration:'none', flexShrink:0 }}
-          >
-            Verify on map →
-          </a>
+          <button onClick={applyManual}
+            style={{ ...btn(manualLat&&manualLng?C.primary:'#ccc'), width:'100%', padding:'10px 0', fontSize:14 }}
+            disabled={!manualLat||!manualLng}>
+            ✓ Use These Coordinates
+          </button>
         </div>
       )}
 
-      {/* Helper text */}
-      {!value?.lat && (
-        <div style={{ fontSize:11, color:C.gray, marginTop:6 }}>
-          💡 Type your street name or area — e.g. "12 Sapele Road" or "GRA Benin City"
+      {/* ── Confirmed: map preview ── */}
+      {value?.lat && (
+        <div style={{ marginTop:12, borderRadius:12, overflow:'hidden', border:`1px solid ${C.border}` }}>
+          <iframe
+            title="Location preview"
+            width="100%" height="220"
+            style={{ border:'none', display:'block' }}
+            src={embedUrl}
+            allowFullScreen loading="lazy"
+            referrerPolicy="no-referrer-when-downgrade"
+          />
+          <div style={{ background:C.bg, padding:'10px 14px', display:'flex', alignItems:'center', justifyContent:'space-between', borderTop:`1px solid ${C.border}` }}>
+            <div>
+              <div style={{ fontSize:12, fontWeight:700, color:C.success }}>✅ Location confirmed</div>
+              <div style={{ fontSize:11, color:C.gray, marginTop:2 }}>{value.lat.toFixed(5)}, {value.lng.toFixed(5)}</div>
+            </div>
+            <div style={{ display:'flex', gap:8 }}>
+              <button onClick={clear} style={{ ...btn('#fff'), color:C.error, border:`1px solid ${C.error}`, fontSize:12, padding:'5px 12px' }}>✕ Clear</button>
+              <a href={`https://www.google.com/maps?q=${value.lat},${value.lng}`} target="_blank" rel="noreferrer"
+                style={{ ...btn(C.primary), fontSize:12, padding:'5px 12px', textDecoration:'none', display:'inline-block' }}>
+                Open in Maps →
+              </a>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -218,7 +301,7 @@ function LocationPicker({ value, onChange, label = 'Restaurant Location' }) {
 // ── REGISTER ──────────────────────────────────────────────────────────────────
 function Register({ onBack }) {
   const [form,setForm]       = useState({ ownerName:'', email:'', password:'', phone:'', restaurantName:'', cuisineType:'', address:'', description:'' });
-  const [location,setLocation] = useState(null); // { lat, lng, address }
+  const [location,setLocation] = useState(null);
   const [loading,setLoading] = useState(false);
   const [success,setSuccess] = useState(false);
   const [error,setError]     = useState('');
@@ -231,7 +314,7 @@ function Register({ onBack }) {
     try {
       await axios.post(`${API}/auth/register-restaurant`, {
         ...form,
-        location: location ? { lat: location.lat, lng: location.lng } : undefined,
+        location: location ? { lat:location.lat, lng:location.lng } : undefined,
       });
       setSuccess(true);
     } catch(err) { setError(err.response?.data?.message || err.message); }
@@ -249,7 +332,7 @@ function Register({ onBack }) {
             ✓ Restaurant: {form.restaurantName}<br/>
             ✓ Cuisine: {form.cuisineType}<br/>
             ✓ Address: {form.address}<br/>
-            {location && `✓ Location set: ${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`}
+            {location && `✓ Location pinned: ${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`}
           </p>
         </div>
         <button onClick={onBack} style={{...btn(C.primary),padding:'12px 32px',fontSize:15}}>← Back to Login</button>
@@ -259,7 +342,6 @@ function Register({ onBack }) {
 
   return (
     <div style={{display:'flex',minHeight:'100vh',background:C.bg}}>
-      {/* Sidebar */}
       <div style={{width:300,background:C.primary,padding:40,display:'flex',flexDirection:'column',justifyContent:'center',position:'sticky',top:0,height:'100vh',flexShrink:0}}>
         <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:32}}>
           <div style={{width:48,height:48,borderRadius:12,background:'rgba(255,255,255,0.2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:24}}>🍽️</div>
@@ -267,23 +349,19 @@ function Register({ onBack }) {
         </div>
         <h2 style={{color:'#fff',fontWeight:800,fontSize:20,marginBottom:8}}>Grow your restaurant with us</h2>
         <p style={{color:'rgba(255,255,255,0.8)',fontSize:13,lineHeight:1.6,marginBottom:24}}>Join restaurants delivering to customers across Edo State.</p>
-        {[['📦','Get orders 24/7'],['💰','Get paid after every delivery'],['📊','Track earnings in real time'],['🛵','We handle the delivery'],['⭐','Build your restaurant rating']].map(([icon,text])=>(
-          <div key={text} style={{display:'flex',alignItems:'center',gap:12,marginBottom:12}}>
-            <span style={{fontSize:18}}>{icon}</span>
-            <span style={{color:'rgba(255,255,255,0.9)',fontSize:13}}>{text}</span>
-          </div>
+        {[['📦','Get orders 24/7'],['💰','Get paid after every delivery'],['📊','Track earnings in real time'],['🛵','We handle the delivery'],['⭐','Build your restaurant rating']].map(([i,t])=>(
+          <div key={t} style={{display:'flex',alignItems:'center',gap:12,marginBottom:12}}><span style={{fontSize:18}}>{i}</span><span style={{color:'rgba(255,255,255,0.9)',fontSize:13}}>{t}</span></div>
         ))}
         <button onClick={onBack} style={{...btn('rgba(255,255,255,0.15)'),marginTop:32,border:'1px solid rgba(255,255,255,0.3)',padding:'10px 20px'}}>← Already have an account</button>
       </div>
 
-      {/* Form */}
       <div style={{flex:1,overflowY:'auto',display:'flex',alignItems:'flex-start',justifyContent:'center',padding:40}}>
         <form onSubmit={handle} style={{background:'#fff',borderRadius:24,padding:36,width:'100%',maxWidth:580,boxShadow:'0 4px 24px rgba(0,0,0,0.08)'}}>
           <h2 style={{fontSize:26,fontWeight:800,marginBottom:4}}>Apply to Partner</h2>
           <p style={{color:C.gray,marginBottom:28,fontSize:14}}>Fill in the details below and we'll review your application within 24 hours.</p>
           {error && <div style={{background:'#FEE2E2',color:C.error,padding:12,borderRadius:10,marginBottom:20,fontSize:13}}>{error}</div>}
 
-          {/* Owner info */}
+          {/* Owner */}
           <div style={{background:C.bg,borderRadius:12,padding:16,marginBottom:20}}>
             <h3 style={{fontWeight:800,fontSize:15,marginBottom:14}}>👤 Owner Information</h3>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
@@ -293,52 +371,38 @@ function Register({ onBack }) {
             </div>
           </div>
 
-          {/* Restaurant info */}
+          {/* Restaurant */}
           <div style={{background:C.bg,borderRadius:12,padding:16,marginBottom:20}}>
             <h3 style={{fontWeight:800,fontSize:15,marginBottom:14}}>🏪 Restaurant Information</h3>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14}}>
-              <div>
-                <label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Restaurant Name *</label>
-                <input style={inp} placeholder="e.g. Mama's Kitchen" value={form.restaurantName} onChange={e=>setForm({...form,restaurantName:e.target.value})} />
-              </div>
-              <div>
-                <label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Cuisine Type *</label>
+              <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Restaurant Name *</label><input style={inp} placeholder="e.g. Mama's Kitchen" value={form.restaurantName} onChange={e=>setForm({...form,restaurantName:e.target.value})} /></div>
+              <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Cuisine Type *</label>
                 <select style={{...inp,height:44,cursor:'pointer',background:'#fff'}} value={form.cuisineType} onChange={e=>setForm({...form,cuisineType:e.target.value})}>
-                  <option value="">Select cuisine type...</option>
-                  {CUISINES.map(c=><option key={c} value={c}>{c}</option>)}
+                  <option value="">Select cuisine type...</option>{CUISINES.map(c=><option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
             </div>
-            <div style={{marginBottom:14}}>
-              <label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Street Address * <span style={{fontWeight:400,color:C.gray}}>(shown to customers)</span></label>
-              <input style={inp} placeholder="e.g. 12 Sapele Road, GRA, Benin City" value={form.address} onChange={e=>setForm({...form,address:e.target.value})} />
-            </div>
-            <div style={{marginBottom:14}}>
-              <textarea style={{...inp,height:80,resize:'vertical'}} placeholder="Tell customers what makes your restaurant special... (optional)" value={form.description} onChange={e=>setForm({...form,description:e.target.value})} />
-            </div>
+            <div style={{marginBottom:14}}><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Street Address * <span style={{fontWeight:400,color:C.gray}}>(shown to customers)</span></label><input style={inp} placeholder="e.g. 12 Sapele Road, GRA, Benin City" value={form.address} onChange={e=>setForm({...form,address:e.target.value})} /></div>
+            <textarea style={{...inp,height:80,resize:'vertical'}} placeholder="Tell customers what makes your restaurant special... (optional)" value={form.description} onChange={e=>setForm({...form,description:e.target.value})} />
           </div>
 
-          {/* Location picker */}
+          {/* Location */}
           <div style={{background:'#FFF7ED',borderRadius:12,padding:16,marginBottom:20,border:`1px solid #FED7AA`}}>
             <h3 style={{fontWeight:800,fontSize:15,marginBottom:4}}>📍 Pin Your Location on the Map</h3>
             <p style={{color:'#92400E',fontSize:13,marginBottom:14}}>
-              This helps riders navigate to your restaurant accurately. Search your address below to confirm your exact location.
+              This helps riders navigate to your restaurant accurately. Search your address or enter coordinates.
             </p>
-            <LocationPicker
-              value={location}
-              onChange={setLocation}
-              label="Search your restaurant address"
-            />
+            <LocationPicker value={location} onChange={setLocation} label="Search your restaurant address" />
             {!location && (
-              <div style={{background:'#FEF3C7',borderRadius:8,padding:10,marginTop:10,border:`1px solid #FDE68A`}}>
-                <div style={{fontSize:12,color:'#92400E',fontWeight:600}}>⚠️ Location not set</div>
-                <div style={{fontSize:11,color:'#B45309',marginTop:2}}>You can set this later from Settings, but it's required for riders to find you.</div>
+              <div style={{background:'#FEF3C7',borderRadius:8,padding:10,marginTop:12,border:`1px solid #FDE68A`}}>
+                <div style={{fontSize:12,color:'#92400E',fontWeight:600}}>⚠️ Location not set yet</div>
+                <div style={{fontSize:11,color:'#B45309',marginTop:2}}>You can also set this later from your Settings dashboard.</div>
               </div>
             )}
           </div>
 
           <div style={{background:'#FFF7ED',borderRadius:12,padding:14,marginBottom:20,border:'1px solid #FED7AA'}}>
-            <p style={{color:'#92400E',fontSize:13,margin:0}}>📋 By submitting, you agree to DoorBite's partner terms. We charge a <strong>15% platform fee</strong> on all orders.</p>
+            <p style={{color:'#92400E',fontSize:13,margin:0}}>📋 By submitting, you agree to DoorBite's partner terms. We charge a <strong>10% platform fee</strong> on all orders.</p>
           </div>
 
           <button type="submit" style={{...btn(C.primary),width:'100%',padding:16,fontSize:16}} disabled={loading}>
@@ -425,14 +489,10 @@ function Overview({setPage}) {
         <div><h1 style={{fontSize:26,fontWeight:800}}>{greeting}, {restaurant?.name?.split(' ')[0]} 👋</h1><p style={{color:C.gray}}>{now.toLocaleDateString('en-US',{weekday:'long',day:'numeric',month:'long'})}</p></div>
         {pending>0&&<div onClick={()=>{ setPage('orders'); stopTabFlash(); }} style={{background:'#FEF3C7',border:'1px solid #F59E0B',padding:'8px 16px',borderRadius:20,cursor:'pointer',fontWeight:700,fontSize:13,color:'#92400E'}}>🔔 {pending} new order{pending>1?'s':''} need attention</div>}
       </div>
-      {/* Location warning */}
       {!restaurant?.location?.lat && (
         <div onClick={()=>setPage('settings')} style={{background:'#FFF7ED',border:`1px solid ${C.warning}`,borderRadius:14,padding:14,marginBottom:20,cursor:'pointer',display:'flex',alignItems:'center',gap:12}}>
           <span style={{fontSize:24}}>📍</span>
-          <div style={{flex:1}}>
-            <div style={{fontWeight:700,fontSize:14,color:'#92400E'}}>Your restaurant location is not set</div>
-            <div style={{fontSize:13,color:'#B45309',marginTop:2}}>Riders won't know where to pick up orders. Click to set your location in Settings.</div>
-          </div>
+          <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14,color:'#92400E'}}>Your restaurant location is not set</div><div style={{fontSize:13,color:'#B45309',marginTop:2}}>Riders won't know where to pick up orders. Click to set your location in Settings.</div></div>
           <span style={{color:C.primary,fontWeight:700,fontSize:13}}>Set Now →</span>
         </div>
       )}
@@ -459,9 +519,7 @@ function Overview({setPage}) {
 
 function Orders() {
   const {restaurant}=useAuth();
-  const [orders,setOrders]=useState([]);
-  const [tab,setTab]=useState('pending');
-  const socketRef=useRef(null);
+  const [orders,setOrders]=useState([]); const [tab,setTab]=useState('pending'); const socketRef=useRef(null);
   const TABS={pending:['pending'],preparing:['confirmed','preparing'],'en route':['ready_for_pickup','accepted','picked_up'],done:['delivered','rejected','cancelled']};
   useEffect(()=>{
     api.get('/orders/restaurant').then(r=>setOrders(r.data)).catch(()=>{});
@@ -520,15 +578,13 @@ function Menu() {
 function Analytics() {
   const [data,setData]=useState(null);
   useEffect(()=>{ api.get('/restaurants/analytics').then(r=>setData(r.data)).catch(()=>{}); },[]);
-  const top=data?.topItems||[];
-  const maxCount=top.length>0?top[0].count:1;
-  const grossRevenue=(data?.allTimeRevenue||0)/0.90;
-  const platformCut=grossRevenue-(data?.allTimeRevenue||0);
+  const top=data?.topItems||[]; const maxCount=top.length>0?top[0].count:1;
+  const grossRevenue=(data?.allTimeRevenue||0)/0.90; const platformCut=grossRevenue-(data?.allTimeRevenue||0);
   return (
     <div style={{padding:28,overflowY:'auto',flex:1}}>
       <h1 style={{fontSize:26,fontWeight:800,marginBottom:20}}>Analytics</h1>
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>{[['TODAY',data?.todayRevenue,data?.todayOrders+' orders'],['THIS WEEK',data?.weekRevenue,data?.weekOrders+' orders'],['THIS MONTH',data?.monthRevenue,data?.monthOrders+' orders'],['ALL TIME',data?.allTimeRevenue,(data?.allTimeOrders||0)+' orders']].map(([l,v,s])=>(<div key={l} style={card}><div style={{color:C.gray,fontSize:10,fontWeight:700,letterSpacing:0.5}}>{l}</div><div style={{fontWeight:800,fontSize:22,margin:'4px 0'}}>₦{(v||0).toLocaleString()}</div><div style={{color:C.gray,fontSize:12}}>{s}</div></div>))}</div>
-      <div style={{...card,borderTop:`3px solid ${C.error}`,marginBottom:20}}><h3 style={{fontWeight:800,marginBottom:4}}>📊 Earnings Breakdown</h3><p style={{color:C.gray,fontSize:13,marginBottom:16}}>DoorBite deducts 15% from every order as a platform fee</p><div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14}}><div style={{background:'#F0FDF4',borderRadius:12,padding:16,borderLeft:`3px solid ${C.success}`}}><div style={{fontSize:11,fontWeight:700,color:C.gray,letterSpacing:0.5}}>GROSS REVENUE</div><div style={{fontSize:22,fontWeight:800,color:C.success,margin:'4px 0'}}>₦{Math.round(grossRevenue).toLocaleString()}</div></div><div style={{background:'#FEF2F2',borderRadius:12,padding:16,borderLeft:`3px solid ${C.error}`}}><div style={{fontSize:11,fontWeight:700,color:C.gray,letterSpacing:0.5}}>DOORBITE CUT (10%)</div><div style={{fontSize:22,fontWeight:800,color:C.error,margin:'4px 0'}}>₦{Math.round(platformCut).toLocaleString()}</div></div><div style={{background:'#EFF6FF',borderRadius:12,padding:16,borderLeft:`3px solid #3B82F6`}}><div style={{fontSize:11,fontWeight:700,color:C.gray,letterSpacing:0.5}}>YOUR NET EARNINGS</div><div style={{fontSize:22,fontWeight:800,color:'#3B82F6',margin:'4px 0'}}>₦{(data?.allTimeRevenue||0).toLocaleString()}</div></div></div></div>
+      <div style={{...card,borderTop:`3px solid ${C.error}`,marginBottom:20}}><h3 style={{fontWeight:800,marginBottom:4}}>📊 Earnings Breakdown</h3><p style={{color:C.gray,fontSize:13,marginBottom:16}}>DoorBite deducts 10% from every order as a platform fee</p><div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14}}><div style={{background:'#F0FDF4',borderRadius:12,padding:16,borderLeft:`3px solid ${C.success}`}}><div style={{fontSize:11,fontWeight:700,color:C.gray,letterSpacing:0.5}}>GROSS REVENUE</div><div style={{fontSize:22,fontWeight:800,color:C.success,margin:'4px 0'}}>₦{Math.round(grossRevenue).toLocaleString()}</div></div><div style={{background:'#FEF2F2',borderRadius:12,padding:16,borderLeft:`3px solid ${C.error}`}}><div style={{fontSize:11,fontWeight:700,color:C.gray,letterSpacing:0.5}}>DOORBITE CUT (10%)</div><div style={{fontSize:22,fontWeight:800,color:C.error,margin:'4px 0'}}>₦{Math.round(platformCut).toLocaleString()}</div></div><div style={{background:'#EFF6FF',borderRadius:12,padding:16,borderLeft:`3px solid #3B82F6`}}><div style={{fontSize:11,fontWeight:700,color:C.gray,letterSpacing:0.5}}>YOUR NET EARNINGS</div><div style={{fontSize:22,fontWeight:800,color:'#3B82F6',margin:'4px 0'}}>₦{(data?.allTimeRevenue||0).toLocaleString()}</div></div></div></div>
       <div style={card}><h3 style={{fontWeight:800,marginBottom:16}}>🏆 Top Menu Items</h3>{top.length===0?(<p style={{color:C.gray,textAlign:'center',padding:20}}>No orders yet</p>):top.map((item,i)=>(<div key={item.name} style={{display:'flex',alignItems:'center',gap:12,marginBottom:14}}><span style={{width:20,color:C.gray,fontWeight:800}}>{i+1}</span><span style={{flex:1,fontWeight:600}}>{item.name}</span><div style={{width:120,height:8,background:'#f5f5f5',borderRadius:4}}><div style={{width:`${(item.count/maxCount)*100}%`,height:'100%',background:C.primary,borderRadius:4}} /></div><span style={{color:C.gray,fontWeight:700,width:40,textAlign:'right'}}>{item.count}×</span></div>))}</div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}><div style={card}><div style={{color:C.gray,fontSize:11,fontWeight:700}}>AVG ORDER VALUE</div><div style={{fontSize:28,fontWeight:800,margin:'4px 0'}}>₦{data?.allTimeOrders>0?Math.floor((data?.allTimeRevenue||0)/(data?.allTimeOrders||1)).toLocaleString():0}</div></div><div style={card}><div style={{color:C.gray,fontSize:11,fontWeight:700}}>TOTAL ORDERS</div><div style={{fontSize:28,fontWeight:800,margin:'4px 0'}}>{data?.allTimeOrders||0}</div></div></div>
     </div>
@@ -554,7 +610,7 @@ function Wallet() {
   );
 }
 
-// ── SETTINGS — includes location section ──────────────────────────────────────
+// ── SETTINGS ──────────────────────────────────────────────────────────────────
 function Settings() {
   const {restaurant,setRestaurant}=useAuth();
   const [form,setForm]=useState({name:'',phone:'',address:'',cuisineType:'',description:'',isOpen:false,openTime:'08:00',closeTime:'22:00',logo:''});
@@ -575,11 +631,10 @@ function Settings() {
   const save=async()=>{
     setSaving(true);
     try{
-      const payload = { ...form };
-      if (location?.lat) payload.location = { lat: location.lat, lng: location.lng };
-      const {data}=await api.patch('/restaurants/me', payload);
-      setRestaurant(data);
-      alert('Settings saved!');
+      const payload={...form};
+      if(location?.lat) payload.location={lat:location.lat,lng:location.lng};
+      const {data}=await api.patch('/restaurants/me',payload);
+      setRestaurant(data); alert('Settings saved!');
     }catch{ alert('Failed to save'); }
     finally{ setSaving(false); }
   };
@@ -627,7 +682,7 @@ function Settings() {
         </div>
       </div>
 
-      {/* Restaurant details */}
+      {/* Details */}
       <div style={{...card,marginBottom:16}}>
         <h3 style={{fontWeight:800,marginBottom:14}}>🏪 Restaurant Details</h3>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
@@ -638,56 +693,26 @@ function Settings() {
         <div style={{marginTop:14}}><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Description</label><textarea style={{...inp,height:90,resize:'vertical'}} value={form.description} onChange={e=>setForm({...form,description:e.target.value})} /></div>
       </div>
 
-      {/* ── LOCATION SECTION ── */}
+      {/* Location */}
       <div style={{...card,marginBottom:16,borderTop:`3px solid ${C.primary}`}}>
         <h3 style={{fontWeight:800,marginBottom:4}}>📍 Restaurant Location</h3>
         <p style={{color:C.gray,fontSize:13,marginBottom:16}}>
-          This is used by riders to navigate to your restaurant. Search your address to pin your exact location.
+          Used by riders to navigate to your restaurant. Search your address to pin the exact location — a map preview will appear to confirm.
         </p>
-
-        <LocationPicker
-          value={location}
-          onChange={setLocation}
-          label="Search and pin your restaurant location"
-        />
-
-        {/* Map preview */}
-        {location?.lat && (
-          <div style={{marginTop:16,borderRadius:12,overflow:'hidden',border:`1px solid ${C.border}`}}>
-            <iframe
-              title="Restaurant location preview"
-              width="100%"
-              height="220"
-              style={{border:'none',display:'block'}}
-              src={`https://www.openstreetmap.org/export/embed.html?bbox=${location.lng-0.005},${location.lat-0.005},${location.lng+0.005},${location.lat+0.005}&layer=mapnik&marker=${location.lat},${location.lng}`}
-            />
-            <div style={{background:C.bg,padding:'10px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <div style={{fontSize:12,color:C.gray}}>
-                📍 {location.lat.toFixed(5)}, {location.lng.toFixed(5)}
-              </div>
-              <a href={`https://www.google.com/maps?q=${location.lat},${location.lng}`} target="_blank" rel="noreferrer"
-                style={{color:C.primary,fontSize:12,fontWeight:700,textDecoration:'none'}}>
-                Open in Google Maps →
-              </a>
-            </div>
-          </div>
-        )}
-
+        <LocationPicker value={location} onChange={setLocation} label="Search and pin your restaurant location" />
         <div style={{marginTop:12,fontSize:12,color:C.gray,background:C.bg,borderRadius:8,padding:10}}>
           💡 After setting your location, click <strong>Save Changes</strong> at the top to apply it.
         </div>
       </div>
 
-      {/* Bank details */}
+      {/* Bank */}
       <div style={{...card,borderTop:`3px solid ${C.success}`}}>
         <h3 style={{fontWeight:800,marginBottom:4}}>🏦 Bank Details for Withdrawals</h3>
         <p style={{color:C.gray,fontSize:13,marginBottom:16}}>Required to receive withdrawal payments via Paystack</p>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14}}>
-          <div>
-            <label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Bank Name</label>
+          <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Bank Name</label>
             <select style={{...inp,cursor:'pointer',background:'#fff',height:44}} value={bankForm.bankName} onChange={e=>{ const s=NIGERIAN_BANKS.find(b=>b.name===e.target.value); setBankForm({...bankForm,bankName:e.target.value,bankCode:s?.code||''}); }}>
-              <option value="">Select your bank...</option>
-              {NIGERIAN_BANKS.map(bank=>(<option key={bank.code} value={bank.name}>{bank.name}</option>))}
+              <option value="">Select your bank...</option>{NIGERIAN_BANKS.map(bank=>(<option key={bank.code} value={bank.name}>{bank.name}</option>))}
             </select>
           </div>
           <div><label style={{fontSize:13,fontWeight:600,display:'block',marginBottom:6}}>Account Number</label><input style={inp} placeholder="10-digit number" maxLength={10} value={bankForm.accountNumber} onChange={e=>setBankForm({...bankForm,accountNumber:e.target.value})} /></div>
@@ -702,9 +727,7 @@ function Settings() {
 
 function AppContent() {
   const {user}=useAuth();
-  const [page,setPage]=useState('overview');
-  const [pendingCount,setPendingCount]=useState(0);
-  const [showRegister,setShowRegister]=useState(false);
+  const [page,setPage]=useState('overview'); const [pendingCount,setPendingCount]=useState(0); const [showRegister,setShowRegister]=useState(false);
   useEffect(()=>{ if(user) api.get('/orders/restaurant').then(r=>setPendingCount(r.data.filter(o=>o.status==='pending').length)).catch(()=>{}); },[user]);
   if(!user) return showRegister ? <Register onBack={()=>setShowRegister(false)} /> : <Login onRegister={()=>setShowRegister(true)} />;
   const pages={overview:<Overview setPage={setPage}/>,orders:<Orders/>,menu:<Menu/>,analytics:<Analytics/>,wallet:<Wallet/>,settings:<Settings/>};
