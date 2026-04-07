@@ -486,18 +486,38 @@ function Login({ onRegister }) {
 }
 
 function Sidebar({page,setPage,pendingCount}) {
-  const {restaurant,logout}=useAuth();
+  const {restaurant,setRestaurant,logout}=useAuth();
+  const [toggling,setToggling]=useState(false);
   const nav=[{k:'overview',l:'Overview',i:'📊'},{k:'orders',l:'Orders',i:'📦',badge:pendingCount},{k:'menu',l:'Menu',i:'🍽️'},{k:'analytics',l:'Analytics',i:'📈'},{k:'wallet',l:'Wallet',i:'💰'},{k:'settings',l:'Settings',i:'⚙️'}];
+
+  const toggleOpen = async () => {
+    setToggling(true);
+    try {
+      const {data} = await api.patch('/restaurants/me', { isOpen: !restaurant.isOpen });
+      setRestaurant(data);
+    } catch { alert('Failed to update status'); }
+    finally { setToggling(false); }
+  };
+
   return (
     <div style={{width:220,background:C.dark,height:'100vh',display:'flex',flexDirection:'column',padding:'24px 16px',position:'sticky',top:0}}>
-      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:20}}><div style={{width:40,height:40,borderRadius:10,background:C.primary,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20}}>O</div><div><div style={{color:'#fff',fontWeight:800,fontSize:15}}>DoorBite</div><div style={{color:'#666',fontSize:10,letterSpacing:1}}>RESTAURANT</div></div></div>
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:20}}><div style={{width:40,height:40,borderRadius:10,background:C.primary,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20}}>🍽️</div><div><div style={{color:'#fff',fontWeight:800,fontSize:15}}>DoorBite</div><div style={{color:'#666',fontSize:10,letterSpacing:1}}>RESTAURANT</div></div></div>
       <div style={{background:'#2A2A2A',borderRadius:12,padding:12,marginBottom:20}}>
         {restaurant?.logo&&<img src={restaurant.logo} alt="" style={{width:40,height:40,borderRadius:8,objectFit:'cover',marginBottom:8,display:'block'}} />}
-        <div style={{color:'#fff',fontWeight:700,fontSize:14}}>{restaurant?.name||'My Restaurant'}</div>
-        <div style={{color:restaurant?.isOpen?C.success:'#666',fontSize:12,marginTop:4,fontWeight:600}}>{restaurant?.isOpen?'● Open':'● Closed'}</div>
+        <div style={{color:'#fff',fontWeight:700,fontSize:14,marginBottom:10}}>{restaurant?.name||'My Restaurant'}</div>
+        {/* ── OPEN / CLOSED TOGGLE ── */}
+        <button onClick={toggleOpen} disabled={toggling} style={{width:'100%',background:restaurant?.isOpen?'#22C55E22':'#EF444422',border:`1px solid ${restaurant?.isOpen?C.success:C.error}`,borderRadius:8,padding:'8px 10px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'space-between',transition:'all 0.2s'}}>
+          <span style={{color:restaurant?.isOpen?C.success:C.error,fontWeight:700,fontSize:13}}>
+            {toggling?'...' : restaurant?.isOpen?'● Open':'● Closed'}
+          </span>
+          {/* Toggle pill */}
+          <div style={{width:36,height:20,borderRadius:10,background:restaurant?.isOpen?C.success:'#555',position:'relative',transition:'all 0.2s',flexShrink:0}}>
+            <div style={{width:14,height:14,borderRadius:'50%',background:'#fff',position:'absolute',top:3,left:restaurant?.isOpen?18:3,transition:'left 0.2s'}} />
+          </div>
+        </button>
       </div>
       <div style={{flex:1}}>{nav.map(n=>(<div key={n.k} onClick={()=>{ setPage(n.k); if(n.k==='orders') stopTabFlash(); }} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,cursor:'pointer',marginBottom:2,background:page===n.k?C.primary:'transparent',color:page===n.k?'#fff':'#888',fontWeight:600,fontSize:14}}><span>{n.i}</span><span style={{flex:1}}>{n.l}</span>{n.badge>0&&<span style={{background:C.error,color:'#fff',borderRadius:10,padding:'2px 7px',fontSize:11,fontWeight:800}}>{n.badge}</span>}</div>))}</div>
-      <div onClick={logout} style={{color:'#666',cursor:'pointer',padding:'10px 12px',fontWeight:600}}>Sign out</div>
+      <div onClick={logout} style={{color:'#666',cursor:'pointer',padding:'10px 12px',fontWeight:600}}>↩ Sign out</div>
     </div>
   );
 }
